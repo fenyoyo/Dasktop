@@ -9,6 +9,7 @@ import {
   primaryMonitor,
 } from "@tauri-apps/api/window";
 import type { DesktopBox } from "@/entities/desktopBox/types";
+import { glueBoxWindowToDesktop } from "@/entities/desktopBox/api";
 import { BOX_CONTEXT_MENU_LAYOUT, BOX_WINDOW_SIZE } from "@/entities/desktopBox/layout";
 import {
   clearBoxContextMenuReady,
@@ -102,6 +103,8 @@ export async function openBoxWindow(
     await existingWindow.setPosition(new LogicalPosition(box.x, box.y));
     await existingWindow.setSize(new LogicalSize(box.width, box.height));
     await existingWindow.setResizable(!box.locked && !box.collapsed);
+    // 已存在的窗口也补一次固定：幂等操作
+    void glueBoxWindowToDesktopSafely(label);
     if (shouldShowInitially) {
       await existingWindow.show();
     }
@@ -136,9 +139,20 @@ export async function openBoxWindow(
       if (shouldShowInitially && !shouldFocus) {
         await window.show();
       }
+      // 挂载后立即固定为「置顶 + 免疫 Win+D」；固定后台执行，失败只降级为普通顶层窗口，不阻断打开流程
+      void glueBoxWindowToDesktopSafely(label);
       resolve();
     });
     void window.once<unknown>("tauri://error", (error) => reject(error.payload));
+  });
+}
+
+/**
+ * 桌面置顶固定的兜底包装：失败只记录警告，避免吞掉 Box 打开主流程
+ */
+function glueBoxWindowToDesktopSafely(label: string): Promise<void> {
+  return glueBoxWindowToDesktop(label).catch((error) => {
+    console.warn(`[desktopBox] 窗口 ${label} 桌面固定失败，保持普通顶层窗口`, error);
   });
 }
 

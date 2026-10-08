@@ -1,6 +1,7 @@
 //! Windows 平台能力统一收口，非 Windows 兜底实现也放在同名模块内保持调用方稳定。
 
 pub(crate) mod common;
+pub(crate) mod desktop_glue;
 pub(crate) mod folder_dialog;
 pub(crate) mod mouse;
 pub(crate) mod native_drop;

@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod box_folder;
+pub mod box_window;
 pub mod desktop;
 pub mod native_drop;
 pub mod workspace;

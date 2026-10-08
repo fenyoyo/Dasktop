@@ -60,6 +60,7 @@ pub fn run() {
             commands::box_folder::handle_box_dropped_paths,
             commands::box_folder::migrate_box_folder,
             commands::box_folder::open_box_folder,
+            commands::box_window::glue_box_window_to_desktop,
             commands::desktop::delete_desktop_items,
             commands::desktop::get_box_folder_revision,
             commands::desktop::get_desktop_snapshot,
