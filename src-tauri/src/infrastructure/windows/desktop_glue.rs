@@ -33,9 +33,13 @@
 //!
 //! # 与 Win+M 的关系
 //!
-//! Win+M（Minimize All）向窗口发 `WM_SYSCOMMAND + SC_MINIMIZE`，会正常最小化
-//! 置顶窗口。Box 是否要响应 Win+M 属于产品决策；本实现只处理 Win+D，不改动
-//! Win+M 的默认最小化行为。
+//! Win+M（Minimize All）向窗口发 `WM_SYSCOMMAND + SC_MINIMIZE`。本实现同样拦截
+//! 该消息（返回 0 不转发），使 Box 在 Win+M 时也保持可见——Box 是「常驻桌面」
+//! 语义，用户按 Win+M 清桌面时它也应留存。
+//!
+//! 注意：拦截 SC_MINIMIZE 会让 Box **无法通过任何方式最小化**（包括点任务栏
+//! 图标、点窗口自带的最小化按钮）。后续若要做「用户可选」，可在此处按配置
+//! 决定是否放行 SC_MINIMIZE。
 //!
 //! # 边界与降级
 //!
@@ -48,7 +52,8 @@ use std::sync::{Mutex, OnceLock};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, DefWindowProcW, IsWindow, SetWindowLongPtrW, SetWindowPos, GWLP_WNDPROC,
-    HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_WINDOWPOSCHANGING, WNDPROC,
+    HWND_TOPMOST, SC_MINIMIZE, SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_SYSCOMMAND,
+    WM_WINDOWPOSCHANGING, WNDPROC,
 };
 
 /// 已固定（pin）的 Box 窗口 → 原窗口过程指针（isize 存储规避裸指针跨容器所有权歧义）。
@@ -103,12 +108,14 @@ pub fn glue_box_window_to_desktop(hwnd: HWND) -> Result<(), String> {
     Ok(())
 }
 
-/// 拦截 `WM_WINDOWPOSCHANGING`：阻止 Win+D 把窗口移到 (-32000, -32000)，
-/// 并强制保持置顶。
+/// 拦截两类消息，让 Box 在「显示桌面」和「全部最小化」时都保持可见：
 ///
-/// Win+D 的机制是向所有**普通 Z 序**窗口发 `WM_WINDOWPOSCHANGING` 尝试把它们
-/// 移到哨兵坐标 (-32000, -32000)。置顶窗口通常不参与，但作为兜底，这里在
-/// 收到该消息时阻止移动并强制 `HWND_TOPMOST`。
+/// - `WM_WINDOWPOSCHANGING`：阻止 Win+D 把窗口移到 (-32000, -32000)，并强制
+///   保持置顶。Win+D 的机制是向所有**普通 Z 序**窗口发该消息尝试把它们移到
+///   哨兵坐标。置顶窗口通常不参与，但作为兜底，这里在收到该消息时阻止移动
+///   并强制 `HWND_TOPMOST`。
+/// - `WM_SYSCOMMAND + SC_MINIMIZE`：Win+M 及一切最小化命令。直接返回 0 不转发，
+///   窗口保持可见，不进入最小化状态。
 unsafe extern "system" fn pin_wndproc(
     hwnd: HWND,
     msg: u32,
@@ -126,6 +133,10 @@ unsafe extern "system" fn pin_wndproc(
             }
             pos_ref.hwndInsertAfter = HWND_TOPMOST;
         }
+    } else if msg == WM_SYSCOMMAND && wparam.0 as u32 & 0xFFF0 == SC_MINIMIZE {
+        // 拦截 Win+M（及最小化命令）：Box 常驻桌面，不响应最小化。
+        // 直接返回 0 表示已处理，不转发给原窗口过程，窗口保持可见。
+        return LRESULT(0);
     }
 
     // 转发给原窗口过程。
