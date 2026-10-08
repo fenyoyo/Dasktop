@@ -29,6 +29,17 @@ pub fn run() {
             .map_err(std::io::Error::other)?;
             infrastructure::tauri::tray::setup_app_tray(app)?;
 
+            // 冷启动路径：本次进程就是主实例（没有可转交的既有实例）。
+            //
+            // 设置窗口在 tauri.conf.json 中配置为 visible:false，普通启动
+            // （例如开机自启）应静默驻留托盘；但由工作区快捷方式启动时，
+            // 用户期待立刻看到还原进度，且工作区还原逻辑挂在前端面板的
+            // onMounted 上——窗口不显示，组件就不会挂载，快捷方式看起来
+            // 就像「点了没反应」。因此仅在携带工作区参数时主动显示窗口。
+            if services::workspace::resolve_startup_workspace_id().is_some() {
+                infrastructure::tauri::tray::show_settings_window(app.handle());
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -59,6 +70,12 @@ pub fn run() {
             commands::app::is_autostart_enabled,
             commands::app::is_primary_mouse_button_pressed,
             commands::app::set_autostart_enabled,
+            commands::workspace::capture_workspace_layout,
+            commands::workspace::create_workspace_desktop_shortcut,
+            commands::workspace::resolve_current_executable_path,
+            commands::workspace::resolve_executable_icons,
+            commands::workspace::resolve_startup_workspace_id,
+            commands::workspace::restore_workspace_layout,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build dasktop");

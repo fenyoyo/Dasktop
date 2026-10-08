@@ -32,6 +32,7 @@ export const APP_SETTINGS_STORAGE = {
     boxVirtualItems: "box_virtual_items",
     boxes: "boxes",
     shellIconVisibilityRecords: "shell_icon_visibility_records",
+    workspaces: "workspaces",
   },
 } as const;
 

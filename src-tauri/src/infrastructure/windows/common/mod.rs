@@ -7,4 +7,6 @@ pub(crate) mod error;
 pub(crate) mod global_memory;
 #[cfg(target_os = "windows")]
 pub(crate) mod hdrop;
+#[cfg(target_os = "windows")]
+pub(crate) mod ipc_channel;
 pub(crate) mod wide;

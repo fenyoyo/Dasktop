@@ -14,16 +14,26 @@ name = "dasktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+# schemars 0.8.22 同时经由 tauri-build（构建期依赖图）引入 indexmap 1.x。
+# Cargo 的 feature 合并只在同一依赖图内生效，构建期依赖图独立解析，
+# 因此必须在此处再声明一次 std，才能让构建期链路里的 indexmap 也走 CARGO_FEATURE_STD 分支。
+indexmap = { version = "1.9.3", features = ["std"] }
 tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
 base64 = "0.22.1"
+# schemars 0.8.22 经由 tauri-utils 传递依赖 indexmap 1.x，但只启用了 serde-1。
+# 新版 rustc 下 indexmap 1.9.3 的 build.rs 无法通过 autocfg 探测到 std（has_std 为假），
+# 导致其 IndexMap<K, V> 缺失默认哈希参数而编译失败。此处显式开启 std feature 强制走 CARGO_FEATURE_STD 分支。
+indexmap = { version = "1.9.3", features = ["std"] }
 png = "0.18.1"
 serde = { version = "1.0.228", features = ["derive"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
-tauri = { version = "2.11.2", features = ["tray-icon"] }
-tauri-plugin-autostart = "2.5.1"
-tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
+# Tauri 要求 Rust crate 与前端 NPM 包保持同一 major/minor，故锁定到 2.11.x 对齐 @tauri-apps/api 2.11.0
+tauri = { version = "~2.11.2", features = ["tray-icon"] }
+tauri-plugin-autostart = "~2.5.1"
+# 同理锁定到 2.4.x 对齐 @tauri-apps/plugin-sql 2.4.0
+tauri-plugin-sql = { version = "~2.4.0", features = ["sqlite"] }
 windows = { version = "0.61.3", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
@@ -32,11 +42,17 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Com",
   "Win32_System_Com_StructuredStorage",
   "Win32_System_DataExchange",
+  # 单实例启动参数管道需要 ReadFile/WriteFile/ConnectNamedPipe，它们由 IO feature 门控
+  "Win32_System_IO",
   "Win32_System_Memory",
   "Win32_System_Ole",
+  # 单实例启动参数需要命名管道承载二次启动的命令行意图
+  "Win32_System_Pipes",
   "Win32_System_Registry",
   "Win32_System_SystemServices",
   "Win32_System_Threading",
+  # 工作区捕获需要按进程取可执行文件路径，用于启动和去重
+  "Win32_System_ProcessStatus",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_UI_Shell_Common",

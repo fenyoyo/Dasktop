@@ -20,6 +20,7 @@ import {
   type AppSettingNumberKey,
 } from "@/entities/appSettings/defaults";
 import { BOX_DEFAULT_STATE, BOX_TITLE_OPACITY } from "@/entities/desktopBox/layout";
+import type { Workspace, WorkspaceWindow } from "@/entities/workspace/types";
 
 let databasePromise: Promise<Database> | null = null;
 /**
@@ -85,6 +86,7 @@ export async function initializeStorage(): Promise<void> {
   await ensureBoxItemOrderStorage(database);
   await ensureBoxVirtualItemStorage(database);
   await ensureShellIconVisibilityRecordStorage(database);
+  await ensureWorkspaceStorage(database);
 }
 
 /**
@@ -441,6 +443,128 @@ function dedupePreservingOrder(values: string[]): string[] {
   }
 
   return result;
+}
+
+/**
+ * 工作区表保存用户命名的应用窗口布局，窗口列表以 JSON 存储。
+ *
+ * 窗口数量和字段结构随捕获结果变化，拆成子表只会增加同步成本，
+ * 且工作区始终整体读写，因此用单个 JSON 列承载窗口列表。
+ */
+async function ensureWorkspaceStorage(database: Database): Promise<void> {
+  await database.execute(`
+    CREATE TABLE IF NOT EXISTS ${APP_SETTINGS_STORAGE.tables.workspaces} (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      windows_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+}
+
+/**
+ * 读取全部工作区，按创建时间升序返回，保证列表顺序稳定。
+ */
+export async function loadWorkspaces(): Promise<Workspace[]> {
+  const database = await getDatabase();
+  await ensureWorkspaceStorage(database);
+  const rows = await database.select<Array<Record<string, unknown>>>(`
+    SELECT id, name, windows_json, created_at
+    FROM ${APP_SETTINGS_STORAGE.tables.workspaces}
+    ORDER BY created_at ASC
+  `);
+
+  return rows.map((row) => ({
+    createdAt: Number(row.created_at),
+    id: String(row.id),
+    name: String(row.name),
+    windows: parseWorkspaceWindows(row.windows_json),
+  }));
+}
+
+/**
+ * 保存单个工作区，同名冲突时整体覆盖。
+ */
+export async function saveWorkspace(workspace: Workspace): Promise<void> {
+  const database = await getDatabase();
+  await ensureWorkspaceStorage(database);
+
+  await database.execute(
+    `
+      INSERT INTO ${APP_SETTINGS_STORAGE.tables.workspaces} (id, name, windows_json, created_at)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        windows_json = excluded.windows_json,
+        created_at = excluded.created_at
+    `,
+    [workspace.id, workspace.name, JSON.stringify(workspace.windows), workspace.createdAt],
+  );
+}
+
+/**
+ * 删除单个工作区。
+ */
+export async function deleteWorkspaceRecord(workspaceId: string): Promise<void> {
+  const database = await getDatabase();
+  await ensureWorkspaceStorage(database);
+  await database.execute(`DELETE FROM ${APP_SETTINGS_STORAGE.tables.workspaces} WHERE id = $1`, [
+    workspaceId,
+  ]);
+}
+
+/**
+ * 反序列化工作区窗口列表，脏数据直接丢弃而不是让整个工作区读取失败。
+ */
+function parseWorkspaceWindows(raw: unknown): WorkspaceWindow[] {
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter(isWorkspaceWindow).map(normalizeWorkspaceWindow);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 补齐窗口条目中在旧版本里不存在的可选字段。
+ *
+ * `arguments` 与 `minimized` 都是后加的字段，旧记录里没有它们；
+ * Rust 侧这两项是必填的 bool 与 String，直接发送 undefined 会触发反序列化失败，
+ * 因此读取时统一补齐默认值。
+ */
+function normalizeWorkspaceWindow(window: WorkspaceWindow): WorkspaceWindow {
+  return {
+    ...window,
+    arguments: typeof window.arguments === "string" ? window.arguments : "",
+    minimized: window.minimized === true,
+  };
+}
+
+/**
+ * 校验窗口条目结构，避免损坏的 JSON 内容进入还原流程触发系统调用。
+ *
+ * 只校验必填的位置与路径字段；`arguments` 与 `minimized` 属于后加的
+ * 可选字段，由 `normalizeWorkspaceWindow` 在之后补齐默认值。
+ */
+function isWorkspaceWindow(value: unknown): value is WorkspaceWindow {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  return (
+    typeof candidate.executablePath === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.x === "number" &&
+    typeof candidate.y === "number" &&
+    typeof candidate.width === "number" &&
+    typeof candidate.height === "number"
+  );
 }
 
 /**

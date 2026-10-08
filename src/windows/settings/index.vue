@@ -8,10 +8,12 @@ import FilePanel from "./panels/FilePanel.vue";
 import SettingsHeader from "./components/SettingsHeader.vue";
 import SettingsSidebar from "./components/SettingsSidebar.vue";
 import WindowPanel from "./panels/WindowPanel.vue";
+import WorkspacePanel from "./panels/WorkspacePanel.vue";
 import { useSettingsActions } from "./composables/useSettingsActions";
 import { useSettingsBoxes } from "./composables/useSettingsBoxes";
 import { useSettingsStartup } from "./composables/useSettingsStartup";
 import { useSettingsWindow } from "./composables/useSettingsWindow";
+import { useWorkspaceStartup } from "./composables/useWorkspaceStartup";
 import {
   SETTINGS_PANEL_WIDTH,
   SETTINGS_SECTIONS,
@@ -26,6 +28,7 @@ const activeTitle = computed(() => resolveSettingsSectionTitle(activeSection.val
 const settingsActions = useSettingsActions(desktopStore);
 const settingsBoxes = useSettingsBoxes(desktopStore);
 const settingsWindow = useSettingsWindow(desktopStore, settingsActions.syncAutostartEnabled);
+const workspaceStartup = useWorkspaceStartup();
 const settingsStartup = useSettingsStartup(
   desktopStore,
   settingsActions.syncAutostartEnabled,
@@ -33,13 +36,23 @@ const settingsStartup = useSettingsStartup(
   (enabled) => {
     settingsActions.autostartEnabled.value = enabled;
   },
+  // 工作区快捷方式启动时保持设置窗可见，否则用户看不到还原进度。
+  // 用回调而非布尔值，让判断发生在实际恢复完成的那一刻。
+  () => !workspaceStartup.requestedWorkspaceId.value,
 );
 
 /**
  * 设置页启动时注册窗口同步和托盘事件，再恢复桌面上的 Box 窗口。
+ *
+ * 工作区启动编排必须早于 Box 恢复：它以最快的速度判断本次是否由
+ * 工作区快捷方式启动，从而决定设置窗在 Box 恢复后是否收起。
  */
 onMounted(async () => {
   await settingsWindow.bindFocusSync();
+  const startupWorkspaceId = await workspaceStartup.initializeWorkspaceStartup();
+  if (startupWorkspaceId) {
+    activeSection.value = "workspace";
+  }
   await settingsStartup.initializeSettingsStartup();
 });
 
@@ -49,6 +62,7 @@ onMounted(async () => {
 onUnmounted(() => {
   settingsWindow.disposeSettingsWindow();
   settingsStartup.disposeSettingsStartup();
+  workspaceStartup.disposeWorkspaceStartup();
 });
 
 /**
@@ -117,6 +131,12 @@ function changeActiveSection(section: SettingsSection): void {
                   @open-folder="settingsBoxes.openBoxFolderFromSettings"
                   @refresh="desktopStore.refreshSnapshot"
                   @toggle-box-locked="settingsBoxes.toggleBoxLockedFromSettings"
+                />
+                <WorkspacePanel
+                  v-else-if="activeSection === 'workspace'"
+                  :desktop-path="desktopStore.desktopPath"
+                  :panel-width="SETTINGS_PANEL_WIDTH.default"
+                  :startup-results="workspaceStartup.startupResults.value"
                 />
                 <FilePanel
                   v-else-if="activeSection === 'file'"

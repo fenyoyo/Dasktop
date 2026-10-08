@@ -1,4 +1,4 @@
-import { Boxes, FolderKanban, Info, Palette, SlidersHorizontal } from "@lucide/vue";
+import { Boxes, FolderKanban, Info, Layers, Palette, SlidersHorizontal } from "@lucide/vue";
 import type { Component } from "vue";
 
 /**
@@ -6,6 +6,7 @@ import type { Component } from "vue";
  */
 export type SettingsSection =
   | "boxes"
+  | "workspace"
   | "file"
   | "window"
   | "appearance"
@@ -28,10 +29,12 @@ export const SETTINGS_PANEL_WIDTH = {
 } as const;
 
 /**
- * 设置页只展示当前真实可用的 5 个主菜单，收纳能力合并到 Box 页避免侧栏过细。
+ * 设置页只展示当前真实可用的主菜单，收纳能力合并到 Box 页避免侧栏过细。
+ * 工作区紧随 Box 之后，符合“先摆放桌面、再按场景组织”的使用顺序。
  */
 export const SETTINGS_SECTIONS: readonly SettingsNavItem[] = [
   { key: "boxes", label: "Box", icon: Boxes },
+  { key: "workspace", label: "工作区", icon: Layers },
   { key: "file", label: "规则显示", icon: FolderKanban },
   { key: "window", label: "窗口启动", icon: SlidersHorizontal },
   { key: "appearance", label: "外观", icon: Palette },

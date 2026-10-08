@@ -3,3 +3,4 @@
 pub mod app;
 pub mod box_folder;
 pub mod desktop;
+pub mod workspace;

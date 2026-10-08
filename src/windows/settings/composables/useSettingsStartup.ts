@@ -13,12 +13,17 @@ const BOX_STARTUP_READY_WAIT_MS = 8_000;
 
 /**
  * 设置页启动组合式逻辑负责初始化 Store、监听托盘入口并批量恢复 Box 窗口。
+ *
+ * `shouldHideAfterBoxRestore` 由调用方传入，用于区分启动意图：
+ * 普通启动（含开机自启）在 Box 恢复完成后隐藏设置窗，静默驻留托盘；
+ * 由工作区快捷方式启动时必须保持可见，否则用户看不到还原进度。
  */
 export function useSettingsStartup(
   desktopStore: ReturnType<typeof useDesktopStore>,
   syncAutostartEnabled: () => Promise<void>,
   createAndOpenBox: () => Promise<void>,
   setAutostartEnabledFromEvent: (enabled: boolean) => void,
+  shouldHideAfterBoxRestore: () => boolean = () => true,
 ) {
   const currentWindow = getCurrentWindow();
   const startupError = ref("");
@@ -41,8 +46,12 @@ export function useSettingsStartup(
       }),
     );
 
+    // Box 恢复完成后按启动意图决定是否收起设置窗：
+    // 工作区快捷方式启动时保持可见，让用户看到还原结果。
     if (await openAllBoxes()) {
-      await currentWindow.hide();
+      if (shouldHideAfterBoxRestore()) {
+        await currentWindow.hide();
+      }
     }
   }
 
