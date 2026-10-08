@@ -13,3 +13,13 @@ export function isAutostartEnabled(): Promise<boolean> {
 export function setAutostartEnabled(enabled: boolean): Promise<boolean> {
   return invoke<boolean>("set_autostart_enabled", { enabled });
 }
+
+/**
+ * 判断本次进程是否由开机自启拉起。
+ *
+ * 与 `isAutostartEnabled` 的区别：那个读的是「自启功能是否已开启」这一持久设置，
+ * 这个只回答「这一次启动是不是自启触发的」，用于决定启动后是否显示设置窗口。
+ */
+export function isAutostartLaunch(): Promise<boolean> {
+  return invoke<boolean>("is_autostart_launch");
+}

@@ -26,6 +26,29 @@ pub(super) fn resolve_initial_autostart_enabled(app: &AppHandle) -> bool {
     }
 }
 
+/// 让已存在的自启注册项补上当前的启动参数。
+///
+/// 自启命令是在「开启自启」那一刻写进系统启动项的，升级后的新参数不会自动生效。
+/// 这里在启动时重写一次自启项：仅在自启已开启时执行，且重写内容与
+/// `set_autostart_enabled` 完全一致（先 disable 再 enable），因此是幂等的。
+///
+/// 失败只记录日志：自启项文案陈旧会让下次开机走「显示窗口」分支，
+/// 属于体验降级而非功能损坏，不应阻断启动流程。
+pub(super) fn refresh_autostart_entry(app: &AppHandle) {
+    if !matches!(resolve_autostart_enabled(app), Ok(true)) {
+        return;
+    }
+
+    let autolaunch = app.autolaunch();
+    if let Err(error) = autolaunch.disable() {
+        eprintln!("failed to refresh autostart entry: {error}");
+        return;
+    }
+    if let Err(error) = autolaunch.enable() {
+        eprintln!("failed to refresh autostart entry: {error}");
+    }
+}
+
 /// 写入系统自启状态并同步所有 UI 入口，避免设置页和托盘出现互相矛盾的勾选状态。
 pub fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String> {
     let autolaunch = app.autolaunch();

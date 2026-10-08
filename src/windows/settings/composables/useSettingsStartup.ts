@@ -6,6 +6,7 @@ import {
   listenBoxWindowReady,
 } from "@/shared/ipc/desktop";
 import { listenAutostartChanged, listenTrayCreateBox } from "@/shared/ipc/appTray";
+import { isAutostartLaunch } from "@/entities/appSettings/api";
 import { openBoxWindow, showBoxWindow } from "@/entities/desktopBox/windows";
 import type { useDesktopStore } from "@/entities/desktopBox/store";
 
@@ -14,16 +15,16 @@ const BOX_STARTUP_READY_WAIT_MS = 8_000;
 /**
  * 设置页启动组合式逻辑负责初始化 Store、监听托盘入口并批量恢复 Box 窗口。
  *
- * `shouldHideAfterBoxRestore` 由调用方传入，用于区分启动意图：
- * 普通启动（含开机自启）在 Box 恢复完成后隐藏设置窗，静默驻留托盘；
- * 由工作区快捷方式启动时必须保持可见，否则用户看不到还原进度。
+ * `shouldKeepVisibleAfterBoxRestore` 由调用方传入，用于叠加启动意图：
+ * 由工作区快捷方式启动时必须保持可见，否则用户看不到还原进度；
+ * 其余情况再按「本次是否开机自启」决定——自启静默驻留托盘，用户手动启动则保留界面。
  */
 export function useSettingsStartup(
   desktopStore: ReturnType<typeof useDesktopStore>,
   syncAutostartEnabled: () => Promise<void>,
   createAndOpenBox: () => Promise<void>,
   setAutostartEnabledFromEvent: (enabled: boolean) => void,
-  shouldHideAfterBoxRestore: () => boolean = () => true,
+  shouldKeepVisibleAfterBoxRestore: () => boolean = () => false,
 ) {
   const currentWindow = getCurrentWindow();
   const startupError = ref("");
@@ -46,12 +47,30 @@ export function useSettingsStartup(
       }),
     );
 
-    // Box 恢复完成后按启动意图决定是否收起设置窗：
-    // 工作区快捷方式启动时保持可见，让用户看到还原结果。
+    // Box 恢复完成后按启动意图决定是否收起设置窗。
+    //
+    // 顺序很重要：先看「本次是否自启」——自启是唯一需要静默的场景；
+    // 再由调用方叠加工作区快捷方式例外，否则用户看不到还原进度。
     if (await openAllBoxes()) {
-      if (shouldHideAfterBoxRestore()) {
+      const isSilentAutostartLaunch = await resolveSilentAutostartLaunch();
+      if (isSilentAutostartLaunch && !shouldKeepVisibleAfterBoxRestore()) {
         await currentWindow.hide();
       }
+    }
+  }
+
+  /**
+   * 读取本次是否由开机自启拉起。
+   *
+   * 查询失败时按「非自启」兜底：宁可多显示一次设置窗，也不要让用户手动启动后
+   * 界面被静默收起而以为程序没运行。
+   */
+  async function resolveSilentAutostartLaunch(): Promise<boolean> {
+    try {
+      return await isAutostartLaunch();
+    } catch (error) {
+      console.warn("failed to resolve autostart launch intent", error);
+      return false;
     }
   }
 

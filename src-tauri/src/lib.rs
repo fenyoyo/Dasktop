@@ -16,9 +16,12 @@ pub fn run() {
     };
 
     let app = tauri::Builder::default()
+        // 自启注册项携带 `--autostart`：Windows 的 Run 键只记录命令行，
+        // 无法在进程内反查「本次是否由自启拉起」，只能在注册时把意图写进命令。
+        // 这样 setup 中就能区分「开机静默驻留托盘」与「用户主动双击」。
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![services::app::lifecycle::AUTOSTART_LAUNCH_ARGUMENT]),
         ))
         .plugin(tauri_plugin_sql::Builder::default().build())
         .setup(move |app| {
@@ -31,12 +34,16 @@ pub fn run() {
 
             // 冷启动路径：本次进程就是主实例（没有可转交的既有实例）。
             //
-            // 设置窗口在 tauri.conf.json 中配置为 visible:false，普通启动
-            // （例如开机自启）应静默驻留托盘；但由工作区快捷方式启动时，
-            // 用户期待立刻看到还原进度，且工作区还原逻辑挂在前端面板的
-            // onMounted 上——窗口不显示，组件就不会挂载，快捷方式看起来
-            // 就像「点了没反应」。因此仅在携带工作区参数时主动显示窗口。
-            if services::workspace::resolve_startup_workspace_id().is_some() {
+            // 设置窗口在 tauri.conf.json 中配置为 visible:false，是否显示取决于
+            // 本次启动意图，共三类：
+            // - 工作区快捷方式（`--workspace <id>`）：显示窗口，用户要看到还原进度；
+            // - 开机自启（`--autostart`）：静默驻留托盘，不打扰用户；
+            // - 其余（用户双击 exe / 开始菜单 / 任务栏）：显示窗口。
+            //
+            // 第三类是修复前的 bug：窗口全程隐藏，用户双击后看不到界面，
+            // 只能去托盘找，观感上就像「点了没反应」。
+            let is_silent_autostart = services::app::lifecycle::is_autostart_launch();
+            if !is_silent_autostart {
                 infrastructure::tauri::tray::show_settings_window(app.handle());
             }
 
@@ -68,6 +75,7 @@ pub fn run() {
             commands::native_drop::register_box_native_drop_target,
             commands::native_drop::unregister_box_native_drop_target,
             commands::app::is_autostart_enabled,
+            commands::app::is_autostart_launch,
             commands::app::is_primary_mouse_button_pressed,
             commands::app::set_autostart_enabled,
             commands::workspace::capture_workspace_layout,

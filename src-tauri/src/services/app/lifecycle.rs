@@ -5,6 +5,21 @@ use crate::infrastructure::tauri::tray;
 use crate::infrastructure::windows::mouse;
 use tauri::AppHandle;
 
+/// 开机自启注册项携带的启动参数。
+///
+/// Windows 的 Run 键只保存一段命令行，进程启动后无法反查「是否由自启拉起」。
+/// 因此把标记写进注册的自启命令里，启动时检查 `argv` 即可区分：
+/// 带该参数说明是系统按自启策略拉起，应静默驻留托盘。
+pub const AUTOSTART_LAUNCH_ARGUMENT: &str = "--autostart";
+
+/// 判断本次进程是否由开机自启拉起。
+///
+/// 只检查参数是否存在，不关心出现位置，避免注册表命令行被用户或安全软件
+/// 调整参数顺序后失效。
+pub fn is_autostart_launch() -> bool {
+    std::env::args().any(|argument| argument == AUTOSTART_LAUNCH_ARGUMENT)
+}
+
 /// 读取插件中的系统自启状态，供设置页命令使用。
 pub fn resolve_autostart_enabled(app: &AppHandle) -> Result<bool, String> {
     tray::resolve_autostart_enabled(app)

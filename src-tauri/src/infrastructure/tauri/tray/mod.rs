@@ -13,6 +13,10 @@ pub(crate) use window::{handle_window_close_requested, show_settings_window};
 
 /// 初始化系统托盘图标和右键菜单；菜单只分发动作，具体 Box 生命周期仍由前端统一处理。
 pub fn setup_app_tray(app: &App) -> tauri::Result<()> {
+    // 升级后自启注册项可能还是旧命令（缺 `--autostart`），这里顺手重写一次，
+    // 让「开机静默」在新版本下立即生效，不需要用户手动关开一次开关。
+    autostart::refresh_autostart_entry(app.handle());
+
     let autostart_enabled = autostart::resolve_initial_autostart_enabled(app.handle());
     let (tray_menu, autostart_item) = menu::build_tray_menu(app, autostart_enabled)?;
     let autostart_item_for_menu = autostart_item.clone();

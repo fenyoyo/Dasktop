@@ -38,7 +38,7 @@ const settingsStartup = useSettingsStartup(
   },
   // 工作区快捷方式启动时保持设置窗可见，否则用户看不到还原进度。
   // 用回调而非布尔值，让判断发生在实际恢复完成的那一刻。
-  () => !workspaceStartup.requestedWorkspaceId.value,
+  () => Boolean(workspaceStartup.requestedWorkspaceId.value),
 );
 
 /**
@@ -110,6 +110,13 @@ function changeActiveSection(section: SettingsSection): void {
             class="mx-8 mt-6 rounded-[12px] border border-[#f0c7c7] bg-[#fff6f6] px-4 py-3 text-[13px] text-[#9f1d1d] dark:border-[#5b2a2d] dark:bg-[#281619] dark:text-[#ffb4b4]"
           >
             Box 启动失败：{{ settingsStartup.startupError.value }}
+          </div>
+
+          <div
+            v-if="workspaceStartup.startupError.value"
+            class="mx-8 mt-6 rounded-[12px] border border-[#f0c7c7] bg-[#fff6f6] px-4 py-3 text-[13px] text-[#9f1d1d] dark:border-[#5b2a2d] dark:bg-[#281619] dark:text-[#ffb4b4]"
+          >
+            工作区还原失败：{{ workspaceStartup.startupError.value }}
           </div>
 
           <div class="settings-panel-stack min-h-full">
