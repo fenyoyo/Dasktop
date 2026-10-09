@@ -8,6 +8,10 @@ use tauri::Manager;
 /// 启动 Dasktop 的 Tauri 运行时，只注册当前版本真实使用的命令和插件
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebView2 的启动参数必须在任何 WebView 创建之前落地，而 Box 的「显示桌面黑闪」
+    // 由此修复（关闭 Chromium 的原生窗口遮挡检测），故放在最前面。
+    infrastructure::windows::webview_runtime::apply_browser_arguments();
+
     let Some(single_instance_guard) =
         infrastructure::windows::single_instance::acquire_or_notify_existing()
             .expect("failed to initialize dasktop single instance guard")

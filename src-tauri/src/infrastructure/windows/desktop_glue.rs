@@ -153,18 +153,28 @@ pub fn has_pinned_boxes() -> bool {
     !live_pinned_boxes().is_empty()
 }
 
-/// 重新探测桌面状态并纠正所有 Box 的层级。**必须在主线程调用。**
+/// 只读探测当前是否处于「显示桌面」状态。**任意线程可安全调用**。
 ///
-/// 由服务层的轮询线程按 `DESKTOP_STATE_POLL_INTERVAL` 周期调度。只做两件廉价的
-/// 只读判断（Z 序几何 + `WS_EX_TOPMOST` 样式位），仅在真正需要时才调用 `SetWindowPos`，
-/// 避免无谓的 Z 序扰动引发 WebView2 重绘。
-pub fn refresh_box_desktop_band() {
+/// 拆出来专供轮询线程做「廉价预检」：在轮询线程直接判定状态，只有状态真的翻转时
+/// 才把排层动作投递到主线程，这样即使把轮询频率提到帧率级也不会淹没主线程事件队列。
+pub fn probe_desktop_shown() -> bool {
+    desktop_is_frontmost()
+}
+
+/// 当前已生效的层级状态（`true` = Box 应处于置顶带）。
+pub fn current_band_state() -> bool {
+    DESKTOP_SHOWN.load(Ordering::SeqCst)
+}
+
+/// 把所有 Box 的层级同步到给定桌面状态。**必须在主线程调用。**
+///
+/// 由状态轮询线程在「检测到翻转」或「到达兜底周期」时投递执行。
+pub fn apply_desktop_band(desktop_shown: bool) {
     let boxes = live_pinned_boxes();
     if boxes.is_empty() {
         return;
     }
 
-    let desktop_shown = desktop_is_frontmost();
     let state_changed = DESKTOP_SHOWN.swap(desktop_shown, Ordering::SeqCst) != desktop_shown;
     if state_changed {
         diag_log(&format!(

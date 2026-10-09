@@ -18,7 +18,7 @@
 //! available」；工作线程调用走事件队列异步应答，天然避开该问题，重试则兜底注册时序抖动。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 use windows::Win32::Foundation::HWND;
@@ -35,11 +35,20 @@ const HANDLE_RESOLVE_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// 桌面状态轮询间隔。
 ///
-/// 150ms 是「Win+D 后 Box 回归桌面的延迟」与「轮询开销」之间的折中：单次探测只做
-/// 一次 Z 序短路遍历（撞到第一个可见非置顶窗口即返回，正常状态下只走几十步），
-/// 开销可忽略。Rainmeter 用 250ms 定时器 + `EVENT_SYSTEM_FOREGROUND` 钩子达到同等
-/// 效果，本实现先用纯轮询换取更少的活动部件。
-const DESKTOP_STATE_POLL_INTERVAL: Duration = Duration::from_millis(150);
+/// 帧率级（≈60Hz）而非原来的 150ms：Win+D 是 **Explorer 自己先把桌面宿主提升到最前**，
+/// Box 由我们事后跟上去。轮询越慢，「桌面已浮起、Box 还被盖在最底层」的中间态就越长，
+/// 随后 Box 才补位出现——两次 Z 序变更叠加，观感上正是「快速黑闪一下」。
+/// 把跟随延迟压到一帧以内，可让 Box 的补位与桌面提升落在同一批合成里。
+///
+/// 探测是短路遍历（普通状态下通常 1~2 步就撞到可见非置顶窗口返回），且真正的状态
+/// 判定在轮询线程完成，只有翻转时才投递主线程，因此 16ms 的频率开销可忽略。
+const DESKTOP_STATE_POLL_INTERVAL: Duration = Duration::from_millis(16);
+
+/// 兜底重同步周期。
+///
+/// 覆盖「桌面状态没翻转、但 Box 的层级被 Explorer 或其它应用扰动」的情况：
+/// 每隔这个周期无条件重新对齐一次，日常轮询则保持零打扰。
+const DESKTOP_STATE_RESYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 /// 桌面状态监视线程是否已启动（每进程只启动一次）。
 static MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
@@ -76,20 +85,33 @@ fn start_desktop_state_monitor(app: &AppHandle) {
     let app_handle = app.clone();
     let spawned = std::thread::Builder::new()
         .name("box-desktop-monitor".into())
-        .spawn(move || loop {
-            std::thread::sleep(DESKTOP_STATE_POLL_INTERVAL);
+        .spawn(move || {
+            let mut last_resync = Instant::now();
+            loop {
+                std::thread::sleep(DESKTOP_STATE_POLL_INTERVAL);
 
-            // 没有存活的 Box 就不必打扰主线程；Box 全部关闭后线程继续空转待命。
-            if !desktop_glue::has_pinned_boxes() {
-                continue;
-            }
+                // 没有存活的 Box 就不必打扰主线程；Box 全部关闭后线程继续空转待命。
+                if !desktop_glue::has_pinned_boxes() {
+                    continue;
+                }
 
-            if let Err(error) =
-                app_handle.run_on_main_thread(desktop_glue::refresh_box_desktop_band)
-            {
-                // 应用正在退出：主线程事件循环已不可用，线程自行结束。
-                eprintln!("box desktop monitor stopped: {error}");
-                return;
+                // 只读探测留在轮询线程：只有状态翻转（或到达兜底周期）才投递主线程，
+                // 主线程事件队列不会被帧率级的轮询淹没。
+                let desktop_shown = desktop_glue::probe_desktop_shown();
+                let now = Instant::now();
+                let need_resync = now.duration_since(last_resync) >= DESKTOP_STATE_RESYNC_INTERVAL;
+                if desktop_shown == desktop_glue::current_band_state() && !need_resync {
+                    continue;
+                }
+                last_resync = now;
+
+                if let Err(error) = app_handle.run_on_main_thread(move || {
+                    desktop_glue::apply_desktop_band(desktop_shown);
+                }) {
+                    // 应用正在退出：主线程事件循环已不可用，线程自行结束。
+                    eprintln!("box desktop monitor stopped: {error}");
+                    return;
+                }
             }
         });
 
