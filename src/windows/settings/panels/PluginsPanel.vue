@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ExternalLink, Puzzle, RefreshCw, ShieldAlert, ShieldCheck } from "@lucide/vue";
+import { AppWindow, ExternalLink, Puzzle, RefreshCw, ShieldAlert, ShieldCheck } from "@lucide/vue";
 import {
   PLUGIN_PERMISSION_DEFINITIONS,
   type PluginPermission,
@@ -23,6 +23,7 @@ defineProps<{
 
 const emit = defineEmits<{
   openRoot: [];
+  openUi: [pluginId: string, pluginName: string];
   reload: [];
 }>();
 
@@ -31,6 +32,13 @@ const emit = defineEmits<{
  */
 const ACTION_BUTTON_CLASS =
   "inline-flex h-9 items-center gap-2 rounded-[9px] border border-[#dfe2e8] bg-[#ffffff] px-3 text-[13px] font-medium text-[#555b66] transition-colors hover:bg-[#f6f7fa] hover:text-[#17181c] disabled:cursor-not-allowed disabled:opacity-45 dark:border-[#292c34] dark:bg-[#181a20] dark:text-[#a7abb5] dark:hover:bg-[#202229] dark:hover:text-[#f4f4f5]";
+
+/**
+ * 插件卡片内的小尺寸操作按钮：视觉上从属于卡片，与旁边的权限标签同一量级，
+ * 不跟面板顶部的主操作按钮争夺注意力。
+ */
+const CARD_ACTION_CLASS =
+  "inline-flex items-center gap-1 rounded-full border border-[#dfe2e8] px-2 py-[3px] text-[11px] font-medium text-[#555b66] transition-colors hover:bg-[#f6f7fa] hover:text-[#17181c] disabled:cursor-not-allowed disabled:opacity-45 dark:border-[#33363f] dark:text-[#a7abb5] dark:hover:bg-[#202229] dark:hover:text-[#f4f4f5]";
 
 /**
  * 权限标签的说明文案从权限映射表派生，界面与真实能力始终同源。
@@ -174,6 +182,22 @@ function describePermission(permission: PluginPermission | string): string {
           >
             {{ STATUS_LABELS[record.status] }}
           </span>
+
+          <button
+            v-if="record.permissions.includes('ui:panel')"
+            :class="CARD_ACTION_CLASS"
+            :disabled="record.status !== 'loaded'"
+            :title="
+              record.status === 'loaded'
+                ? '打开插件界面窗口'
+                : '插件未成功加载，无法打开界面'
+            "
+            type="button"
+            @click="emit('openUi', record.id, record.name)"
+          >
+            <AppWindow :size="12" />
+            界面
+          </button>
         </div>
       </SettingRow>
 

@@ -1,6 +1,7 @@
 import { computed, type ComputedRef } from "vue";
 import {
   initializePluginRuntime,
+  openPluginHostWindow,
   pluginRuntime,
   reloadPluginRuntime,
   type PluginRuntimeSnapshot,
@@ -20,6 +21,8 @@ export interface SettingsPluginsContext {
   initializePlugins: () => Promise<void>;
   /** 用系统资源管理器打开插件根目录。 */
   openPluginsRoot: () => Promise<void>;
+  /** 打开插件宿主窗口，展示指定插件下发的界面。 */
+  openPluginUi: (pluginId: string, pluginName: string) => Promise<void>;
   /** 卸载全部插件后重新扫描激活。 */
   reloadPlugins: () => Promise<void>;
   /** 只读运行时快照，面板直接消费。 */
@@ -51,5 +54,14 @@ export function useSettingsPlugins(): SettingsPluginsContext {
     }
   }
 
-  return { initializePlugins, openPluginsRoot, reloadPlugins, runtime };
+  async function openPluginUi(pluginId: string, pluginName: string): Promise<void> {
+    try {
+      await openPluginHostWindow(pluginId, pluginName);
+    } catch (error) {
+      // 窗口创建失败不该让设置页崩掉：插件界面是可选功能，失败只记日志。
+      console.error("[plugin] 打开插件界面失败", error);
+    }
+  }
+
+  return { initializePlugins, openPluginUi, openPluginsRoot, reloadPlugins, runtime };
 }

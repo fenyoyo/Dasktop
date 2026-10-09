@@ -65,7 +65,14 @@ export interface PluginNotificationPayload {
  *
  * 字符串统一采用 `领域:动作` 格式，新增能力只需在此追加一项并在权限映射表里补一条记录。
  */
-export const PLUGIN_PERMISSIONS = ["fs:read", "fs:write", "log:write", "ui:notify"] as const;
+export const PLUGIN_PERMISSIONS = [
+  "fs:read",
+  "fs:write",
+  "log:write",
+  "net:request",
+  "ui:notify",
+  "ui:panel",
+] as const;
 
 /**
  * 能力权限联合类型。
@@ -106,6 +113,48 @@ export interface PluginLogApi {
 export type PluginNotifyApi = (title: string, message: string) => Promise<void>;
 
 /**
+ * 插件发起的 HTTP 请求描述，与 Rust 侧 `PluginHttpRequest` 逐字段对应。
+ *
+ * 只有 `url` 是必填项，让「取一个接口」这类常见调用写成一行。
+ */
+export interface PluginHttpRequest {
+  /** 请求体，按 UTF-8 文本承载。 */
+  body?: string;
+  /** 请求头，键值均为字符串。 */
+  headers?: Record<string, string>;
+  /** 请求方法，缺省为 GET。 */
+  method?: string;
+  /** 目标地址，仅接受 http / https 协议。 */
+  url: string;
+}
+
+/**
+ * 插件 HTTP 请求结果。
+ *
+ * 非 2xx 不作为异常抛出：调用外部接口时 4xx 往往带有插件需要读取的说明正文，
+ * 把它变成异常会迫使插件再发一次相同请求。
+ */
+export interface PluginHttpResponse {
+  /** 响应体文本；非 UTF-8 内容已被有损转换。 */
+  body: string;
+  /** 响应头，同名头以逗号合并。 */
+  headers: Record<string, string>;
+  /** HTTP 状态码。 */
+  status: number;
+}
+
+/**
+ * 网络请求接口，整体由 `net:request` 权限门控。
+ *
+ * 宿主不做域名白名单（粒度选择为「仅权限门控」），因此插件一旦声明该权限
+ * 即可访问任意 http / https 地址；超时与响应体体积仍由宿主强制约束。
+ */
+export interface PluginNetApi {
+  /** 发起一次 HTTP 请求，返回状态码、响应头与响应体文本。 */
+  request: (request: PluginHttpRequest) => Promise<PluginHttpResponse>;
+}
+
+/**
  * 受控 API 上下文，也就是插件的 `activate(host)` 参数。
  *
  * 设计要点是「按权限裁剪」：清单未声明 `ui:notify` 时 `notify` 成员根本不存在，
@@ -130,6 +179,8 @@ export interface PluginHostApi {
   readonly log?: PluginLogApi;
   /** 宿主通知，仅声明 `ui:notify` 时存在。 */
   readonly notify?: PluginNotifyApi;
+  /** 网络请求，仅声明 `net:request` 时存在。 */
+  readonly net?: PluginNetApi;
 }
 
 /**
@@ -206,3 +257,129 @@ export interface PluginRuntimeSnapshot {
  * 通知只在当前会话内展示，不落库；上限用于防止插件高频调用 `ui:notify` 时把内存吃满。
  */
 export const PLUGIN_NOTIFICATION_LIMIT = 50;
+
+/* -------------------------------------------------------------------------- */
+/* Worker 通信协议                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 下发给插件 Worker 的身份与授权配置。
+ *
+ * 只包含可结构化克隆的基本类型：Worker 边界上不能传函数或类实例。
+ */
+export interface PluginWorkerConfig {
+  /** 宿主版本号。 */
+  hostVersion: string;
+  /** 经加载期预检后实际授予的权限。 */
+  permissions: readonly PluginPermission[];
+  /** 插件唯一标识。 */
+  pluginId: string;
+  /** 插件版本号。 */
+  pluginVersion: string;
+}
+
+/**
+ * 主线程发给插件 Worker 的消息。
+ *
+ * `rpc-result` 是宿主能力调用的回执，其余是生命周期与界面交互指令。
+ */
+export type PluginWorkerInbound =
+  | { kind: "init"; config: PluginWorkerConfig }
+  | { id: number; kind: "rpc-result"; ok: true; value: unknown }
+  | { error: string; id: number; kind: "rpc-result"; ok: false }
+  | { kind: "deactivate" }
+  | { action: string; kind: "ui-event"; payload?: unknown };
+
+/**
+ * 插件 Worker 发给主线程的消息。
+ *
+ * `rpc` 承载「插件想调用某项宿主能力」的意图；真正的权限校验发生在主线程，
+ * Worker 侧发出的请求一律按不可信输入处理。
+ */
+export type PluginWorkerOutbound =
+  | { args: unknown[]; id: number; kind: "rpc"; method: string }
+  | { kind: "activated" }
+  | { kind: "deactivated" }
+  | { message: string; kind: "error" }
+  /** 插件下发的声明式界面描述，由宿主渲染成真实 DOM。 */
+  | { kind: "ui-render"; tree: PluginUiNode };
+
+/* -------------------------------------------------------------------------- */
+/* 声明式 UI 协议                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 插件界面节点。
+ *
+ * 刻意设计成「可序列化的纯数据」而不是 HTML 字符串：插件永远无法制造内联脚本、
+ * 内联样式或事件属性，宿主渲染器是唯一决定「什么能变成 DOM」的地方。
+ */
+export type PluginUiNode =
+  | PluginUiText
+  | PluginUiButton
+  | PluginUiInput
+  | PluginUiStack
+  | PluginUiCard
+  | PluginUiList
+  | PluginUiKeyValue;
+
+/** 行内纯文本。 */
+export interface PluginUiText {
+  /** 视觉强度，缺省为常规正文。 */
+  tone?: "muted" | "normal" | "strong";
+  type: "text";
+  value: string;
+}
+
+/** 按钮；点击后宿主把 `action` 回传给插件。 */
+export interface PluginUiButton {
+  /** 回传给插件的动作标识。 */
+  action: string;
+  label: string;
+  /** 视觉风格，缺省为默认按钮。 */
+  tone?: "danger" | "default" | "primary";
+  type: "button";
+}
+
+/**
+ * 单行输入框。
+ *
+ * 内容**提交时**（回车或失焦）才回传 `action`，而不是每次按键都回传：
+ * 逐键往返会让插件重渲染整棵树，输入框随之重建，光标位置也会丢。
+ */
+export interface PluginUiInput {
+  action: string;
+  label?: string;
+  placeholder?: string;
+  type: "input";
+  value?: string;
+}
+
+/** 纵向或横向排列的容器。 */
+export interface PluginUiStack {
+  children: PluginUiNode[];
+  direction: "column" | "row";
+  /** 子节点间距，取有限档位而不是任意像素值。 */
+  gap?: "lg" | "md" | "none" | "sm";
+  type: "stack";
+}
+
+/** 带标题的卡片容器。 */
+export interface PluginUiCard {
+  children: PluginUiNode[];
+  title?: string;
+  type: "card";
+}
+
+/** 纯文本列表。 */
+export interface PluginUiList {
+  items: string[];
+  type: "list";
+}
+
+/** 键值对表格，用于展示接口返回的字段。 */
+export interface PluginUiKeyValue {
+  entries: { key: string; value: string }[];
+  type: "key-value";
+}
+

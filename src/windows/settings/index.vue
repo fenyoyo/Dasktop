@@ -186,6 +186,7 @@ function changeActiveSection(section: SettingsSection): void {
                   :panel-width="SETTINGS_PANEL_WIDTH.default"
                   :runtime="settingsPlugins.runtime.value"
                   @open-root="settingsPlugins.openPluginsRoot"
+                  @open-ui="settingsPlugins.openPluginUi"
                   @reload="settingsPlugins.reloadPlugins"
                 />
                 <AboutPanel

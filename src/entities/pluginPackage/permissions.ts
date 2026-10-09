@@ -38,9 +38,19 @@ export const PLUGIN_PERMISSION_DEFINITIONS: readonly PluginPermissionDefinition[
     summary: "写入按插件隔离的运行日志",
   },
   {
+    hostMember: "host.net",
+    permission: "net:request",
+    summary: "发起 HTTP 请求（超时与响应体体积由宿主强制约束）",
+  },
+  {
     hostMember: "host.notify",
     permission: "ui:notify",
     summary: "向宿主发送通知",
+  },
+  {
+    hostMember: "host.ui.render",
+    permission: "ui:panel",
+    summary: "下发布局描述，由宿主渲染到插件宿主窗口",
   },
 ];
 

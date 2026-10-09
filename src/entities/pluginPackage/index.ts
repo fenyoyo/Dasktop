@@ -15,10 +15,14 @@ export {
   disposePluginRuntime,
   initializePluginRuntime,
   pluginRuntime,
+  pluginUiTrees,
   reloadPluginRuntime,
+  sendPluginUiEvent,
   unloadAllPlugins,
   unloadPlugin,
 } from "./loader";
+
+export { closePluginHostWindow, openPluginHostWindow, PLUGIN_HOST_WINDOW_LABEL } from "./window";
 
 export {
   PLUGIN_PERMISSION_DEFINITIONS,
@@ -34,8 +38,11 @@ export {
   PLUGIN_PERMISSIONS,
   type PluginFsApi,
   type PluginHostApi,
+  type PluginHttpRequest,
+  type PluginHttpResponse,
   type PluginLogApi,
   type PluginModule,
+  type PluginNetApi,
   type PluginNotificationPayload,
   type PluginNotifyApi,
   type PluginPackageManifest,
@@ -45,4 +52,6 @@ export {
   type PluginRuntimeSnapshot,
   type PluginRuntimeStatus,
   type PluginScanResult,
+  type PluginUiNode,
+  type PluginWorkerConfig,
 } from "./types";

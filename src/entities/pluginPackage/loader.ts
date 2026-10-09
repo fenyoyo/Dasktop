@@ -1,32 +1,48 @@
 import { readonly, shallowRef } from "vue";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { APP_META } from "@/shared/config/appMeta";
-import { listenPluginNotification } from "@/shared/ipc/pluginPackage";
+import {
+  emitPluginUiRender,
+  listenPluginHostReady,
+  listenPluginNotification,
+  listenPluginUiEvent,
+} from "@/shared/ipc/pluginPackage";
 import { listPlugins, readPluginEntry } from "./api";
-import { createPluginHost } from "./context";
 import { resolvePluginPermissions } from "./permissions";
 import {
   PLUGIN_NOTIFICATION_LIMIT,
-  type PluginHostApi,
-  type PluginModule,
   type PluginNotificationPayload,
   type PluginPackageRecord,
   type PluginRuntimeRecord,
   type PluginRuntimeSnapshot,
+  type PluginUiNode,
 } from "./types";
+import { startPluginWorker, type PluginWorkerHandle } from "./worker/host";
 
 /**
  * 已激活插件表，key 为插件 id。
  *
- * 表里保存的是「模块 + 上下文」这一对：卸载时需要把当初构建的上下文原样交回
- * `deactivate`，插件才能用它释放自己申请的资源。
+ * 表里保存的是 Worker 句柄：卸载时要通过它请求插件收尾，再终止 Worker。
+ * 插件本体已经不在主线程里，这里也拿不到它的模块对象——这正是隔离生效的标志。
  */
 interface ActivePlugin {
-  host: PluginHostApi;
-  module: PluginModule;
+  worker: PluginWorkerHandle;
 }
 
 const activePlugins = new Map<string, ActivePlugin>();
+
+/**
+ * 各插件最近一次下发的界面描述。
+ *
+ * 放在模块级而不是插件记录里：界面树只在需要渲染时被读取，与运行时列表的
+ * 更新节奏无关，混进快照会让每次界面刷新增量重建整个记录数组。
+ */
+const uiTrees = shallowRef<Record<string, PluginUiNode>>({});
+
+/**
+ * 只读界面树视图，插件宿主窗口据此渲染。
+ */
+export const pluginUiTrees = readonly(uiTrees);
 
 /**
  * 运行时快照。用 `shallowRef` 而不是 `reactive`：快照整体替换，
@@ -60,6 +76,16 @@ let initializationPromise: Promise<void> | null = null;
 let notificationUnlisten: UnlistenFn | null = null;
 
 /**
+ * 插件宿主窗口就绪事件的订阅句柄。
+ */
+let hostReadyUnlisten: UnlistenFn | null = null;
+
+/**
+ * 插件界面交互事件的订阅句柄。
+ */
+let uiEventUnlisten: UnlistenFn | null = null;
+
+/**
  * 首次调用时扫描并激活全部插件包；重复调用复用同一次初始化。
  */
 export async function initializePluginRuntime(): Promise<void> {
@@ -84,7 +110,7 @@ export async function reloadPluginRuntime(): Promise<void> {
 /**
  * 卸载单个插件。
  *
- * 先把它从已激活表里摘掉再调用 `deactivate`：插件在收尾过程中再次触发加载流程时，
+ * 先把它从已激活表里摘掉再请求收尾：插件在收尾过程中再次触发加载流程时，
  * 不会被误判成「已经激活」而直接跳过。
  */
 export async function unloadPlugin(pluginId: string): Promise<void> {
@@ -96,11 +122,13 @@ export async function unloadPlugin(pluginId: string): Promise<void> {
   activePlugins.delete(pluginId);
 
   try {
-    await active.module.deactivate?.(active.host);
+    await active.worker.deactivate();
   } catch (error) {
     // 卸载失败不应阻塞其它插件，也不应该让宿主崩在一个第三方收尾逻辑上。
     console.error(`[plugin] ${pluginId} 卸载失败`, error);
   }
+
+  clearPluginUiTree(pluginId);
 
   updateSnapshot({
     records: snapshot.value.records.map((record) =>
@@ -121,15 +149,26 @@ export async function unloadAllPlugins(): Promise<void> {
 }
 
 /**
- * 释放宿主级订阅，供应用级收尾与开发热更新使用。
+ * 释放宿主级订阅与全部 Worker，供应用级收尾与开发热更新使用。
  *
- * 热更新会重新执行本模块，如果不退订，旧模块持有的监听器会继续append 到已被替换的快照上。
+ * 热更新会重新执行本模块，如果不终止 Worker，旧实例会连同它们的定时器一起变成孤儿；
+ * 旧模块持有的监听器也会继续追加到已被替换的快照上。
  */
 export function disposePluginRuntime(): void {
+  for (const active of activePlugins.values()) {
+    active.worker.dispose();
+  }
+
+  activePlugins.clear();
+  uiTrees.value = {};
+
   notificationUnlisten?.();
   notificationUnlisten = null;
+  hostReadyUnlisten?.();
+  hostReadyUnlisten = null;
+  uiEventUnlisten?.();
+  uiEventUnlisten = null;
   initializationPromise = null;
-  activePlugins.clear();
 }
 
 /**
@@ -139,6 +178,16 @@ export function appendPluginNotification(payload: PluginNotificationPayload): vo
   updateSnapshot({
     notifications: [payload, ...snapshot.value.notifications].slice(0, PLUGIN_NOTIFICATION_LIMIT),
   });
+}
+
+/**
+ * 把插件界面上的交互回传给对应插件。
+ *
+ * 插件不存在（尚未激活或已被卸载）时静默丢弃：点击发生在独立窗口里，
+ * 而窗口生命周期可能晚于插件本身，此时抛错只会把问题抛给用户。
+ */
+export function sendPluginUiEvent(pluginId: string, action: string, payload?: unknown): void {
+  activePlugins.get(pluginId)?.worker.sendUiEvent(action, payload);
 }
 
 /**
@@ -152,12 +201,15 @@ async function loadPluginPackages(): Promise<void> {
 
   try {
     await ensureNotificationListener();
+    await ensurePluginHostReadyListener();
+    await ensurePluginUiEventForwarder();
 
     const scan = await listPlugins();
     const records: PluginRuntimeRecord[] = [];
 
     // 逐包串行激活而不是并发：插件激活通常包含文件读写，串行能让日志顺序与列表顺序一致，
-    // 也更符合「插件数量是十几个量级」的实际规模。
+    // 也更符合「插件数量是十几个量级」的实际规模。激活现在跑在独立 Worker 里，
+    // 单个插件的死循环不会再卡住宿主主线程。
     for (const packageRecord of scan.packages) {
       records.push(await activatePluginPackage(packageRecord));
     }
@@ -206,52 +258,49 @@ async function activatePluginPackage(
 
   try {
     const source = await readPluginEntry(packageRecord.id);
-    const pluginModule = await importPluginModule(packageRecord.id, source);
-    const host = createPluginHost({
+    const worker = await startPluginWorker({
       hostVersion: APP_META.version,
+      onUiRender: (tree) => setPluginUiTree(packageRecord.id, tree),
       permissions: granted,
       pluginId: packageRecord.id,
       pluginVersion: packageRecord.manifest.version,
+      source,
     });
 
-    await pluginModule.activate(host);
-    activePlugins.set(packageRecord.id, { host, module: pluginModule });
+    activePlugins.set(packageRecord.id, { worker });
 
     return { ...base, loadedAt: Date.now(), permissions: granted, status: "loaded" };
   } catch (error) {
-    // 激活中途失败可能已经产生副作用（例如起了定时器），因此显式清理已注册项，
+    // 激活中途失败可能已经产生副作用，因此显式清理已注册项，
     // 避免下一次「重新加载」把同一个插件当成已激活而跳过激活。
     activePlugins.delete(packageRecord.id);
+    clearPluginUiTree(packageRecord.id);
 
     return { ...base, error: describeError(error), permissions: granted };
   }
 }
 
 /**
- * 把插件源码包装成可执行模块。
- *
- * 源码以 Blob URL 形式交给原生动态 `import`，模块被当作普通 ESM 处理，
- * 不需要 `eval` 或 `new Function`，因此不受脚本内联相关安全策略限制。
+ * 记录一次界面下发。
  */
-async function importPluginModule(pluginId: string, source: string): Promise<PluginModule> {
-  const blob = new Blob([source], { type: "text/javascript" });
-  const blobUrl = URL.createObjectURL(blob);
+function setPluginUiTree(pluginId: string, tree: PluginUiNode): void {
+  uiTrees.value = { ...uiTrees.value, [pluginId]: tree };
 
-  try {
-    // `@vite-ignore` 保留这条运行期动态导入：URL 每次运行才生成，静态分析阶段
-    // 既无法把它替换成模块路径，也不应该尝试解析它。
-    const loaded = (await import(/* @vite-ignore */ blobUrl)) as Partial<PluginModule>;
+  // 插件宿主窗口是独立 WebView，读不到本窗口的内存状态，界面树只能靠事件同步过去。
+  void emitPluginUiRender({ pluginId, tree });
+}
 
-    if (typeof loaded.activate !== "function") {
-      throw new Error(`插件 ${pluginId} 的入口文件必须导出 activate(host) 函数`);
-    }
-
-    return loaded as PluginModule;
-  } finally {
-    // 模块在 import 阶段已完成实例化，源码进入 ESM 模块表，Blob URL 可以立即回收，
-    // 不需要等到插件卸载——否则每个插件都会长期占用一份源码内存。
-    URL.revokeObjectURL(blobUrl);
+/**
+ * 清掉某个插件的界面树。
+ */
+function clearPluginUiTree(pluginId: string): void {
+  if (!(pluginId in uiTrees.value)) {
+    return;
   }
+
+  const next = { ...uiTrees.value };
+  delete next[pluginId];
+  uiTrees.value = next;
 }
 
 /**
@@ -264,6 +313,47 @@ async function ensureNotificationListener(): Promise<void> {
 
   notificationUnlisten = await listenPluginNotification((event) => {
     appendPluginNotification(event.payload);
+  });
+}
+
+/**
+ * 确保插件宿主窗口的就绪握手只订阅一次。
+ *
+ * 窗口挂载完成后广播「就绪」，这里回发它当前需要的界面树。用握手而不是在创建窗口后
+ * 直接补发，是为了避开「事件早于监听器注册」的时序问题——新建窗口的监听器注册完成时间
+ * 无法从外部准确推断。
+ */
+async function ensurePluginHostReadyListener(): Promise<void> {
+  if (hostReadyUnlisten) {
+    return;
+  }
+
+  hostReadyUnlisten = await listenPluginHostReady((event) => {
+    const pluginId = event.payload;
+    const tree = uiTrees.value[pluginId];
+
+    if (tree) {
+      void emitPluginUiRender({ pluginId, tree });
+    }
+  });
+}
+
+/**
+ * 确保界面交互转发只订阅一次。
+ *
+ * 交互事件来自插件宿主窗口（另一个 WebView），这里把它转交给对应插件的 Worker。
+ * 刻意不做权限校验：只有声明了 `ui:panel` 的插件才可能产生界面交互，而且交互本身
+ * 不触达任何宿主能力——它只是把数据交给插件自己。
+ */
+async function ensurePluginUiEventForwarder(): Promise<void> {
+  if (uiEventUnlisten) {
+    return;
+  }
+
+  uiEventUnlisten = await listenPluginUiEvent((event) => {
+    const { action, payload, pluginId } = event.payload;
+
+    sendPluginUiEvent(pluginId, action, payload);
   });
 }
 

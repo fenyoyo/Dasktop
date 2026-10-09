@@ -1,136 +1,153 @@
 import {
   notifyFromPlugin,
   readPluginPackageFile,
+  requestFromPlugin,
   writePluginLog,
   writePluginPackageFile,
 } from "./api";
 import { assertPluginPermission } from "./permissions";
-import type {
-  PluginFsApi,
-  PluginHostApi,
-  PluginLogApi,
-  PluginNotifyApi,
-  PluginPermission,
-} from "./types";
+import type { PluginHttpRequest, PluginPermission } from "./types";
 
 /**
- * 构建受控上下文所需的输入。
+ * 主线程侧的宿主能力桥。
+ *
+ * 这是**权限校验唯一真实生效的地方**。插件代码跑在 Web Worker 里，它持有的那份
+ * `host` 对象只是便利层——插件完全可以替换掉它、或者直接 `postMessage` 一条伪造的
+ * RPC。因此判定「这个插件能不能读文件」的依据只能是这里收到的 `method` 字符串
+ * 与宿主自己保存的授权集合，绝不能相信 Worker 侧的任何自述。
+ *
+ * 与改造前的区别：旧实现把校验放在插件直接调用的对象方法里，插件与宿主同线程、
+ * 同全局环境，理论上能绕过；现在插件连 `window` 都拿不到，触达宿主的入口只有
+ * Worker 的消息通道，而这条通道的每个分支都会校验一次。
  */
-export interface CreatePluginHostOptions {
-  /** 宿主版本号，透传给插件用于提示适配范围。 */
-  hostVersion: string;
+
+/**
+ * 构建宿主能力桥所需的输入。
+ */
+export interface CreatePluginHostBridgeOptions {
   /** 经加载期预检后实际授予的权限。 */
   permissions: readonly PluginPermission[];
   /** 插件唯一标识，同时作为所有宿主调用的归属标识。 */
   pluginId: string;
-  /** 插件版本号，取自清单。 */
-  pluginVersion: string;
 }
 
 /**
- * 构建插件的受控 API 上下文。
- *
- * 这是安全边界的核心：返回对象上只有「清单已声明权限」对应的成员，
- * 且每个成员在真正触达宿主命令前都会再做一次权限校验。
- * 上下文里没有 `invoke`、没有任何 Tauri 句柄，插件无法绕过本层直接调用宿主命令。
- *
- * 需要特别注意：本层的门控强度依赖于「插件拿不到原始 invoke」这一前提。
- * 插件与宿主同线程运行，理论上仍可通过 `window` 触及宿主注入的全局对象，
- * 彻底封堵需要把插件迁到 Web Worker，见 `docs/plugin-package-framework.md` 的局限章节。
+ * 宿主能力桥，由 Worker 宿主在收到 `rpc` 消息时调用。
  */
-export function createPluginHost(options: CreatePluginHostOptions): PluginHostApi {
-  const { hostVersion, permissions, pluginId, pluginVersion } = options;
+export interface PluginHostBridge {
+  /**
+   * 处理一次来自插件 Worker 的能力调用。
+   *
+   * 返回值必须可结构化克隆——它要跨 Worker 边界送回插件侧。
+   */
+  handle: (method: string, args: unknown[]) => Promise<unknown>;
+}
+
+/**
+ * 构建宿主能力桥。
+ */
+export function createPluginHostBridge(
+  options: CreatePluginHostBridgeOptions,
+): PluginHostBridge {
+  const { permissions, pluginId } = options;
   const granted = new Set<PluginPermission>(permissions);
 
-  const host: {
-    fs?: PluginFsApi;
-    hostVersion: string;
-    log?: PluginLogApi;
-    notify?: PluginNotifyApi;
-    permissions: readonly PluginPermission[];
-    pluginId: string;
-    pluginVersion: string;
-  } = {
-    hostVersion,
-    // 复制一份而不是把 Set 直接给出去：插件通过它反查权限集合时不应该拿到可变引用。
-    permissions: [...permissions],
-    pluginId,
-    pluginVersion,
+  return {
+    handle: async (method, args) => {
+      switch (method) {
+        case "fs.read": {
+          assertPluginPermission(granted, "fs:read", pluginId);
+
+          return readPluginPackageFile(pluginId, asString(args[0], "path"));
+        }
+
+        case "fs.write": {
+          assertPluginPermission(granted, "fs:write", pluginId);
+
+          return writePluginPackageFile(
+            pluginId,
+            asString(args[0], "path"),
+            asString(args[1], "contents"),
+          );
+        }
+
+        case "log.write": {
+          assertPluginPermission(granted, "log:write", pluginId);
+
+          const level = args[1] === undefined ? "info" : asString(args[1], "level");
+
+          return writePluginLog(pluginId, level, asString(args[0], "message"));
+        }
+
+        case "net.request": {
+          assertPluginPermission(granted, "net:request", pluginId);
+
+          return requestFromPlugin(pluginId, asHttpRequest(args[0]));
+        }
+
+        case "notify": {
+          assertPluginPermission(granted, "ui:notify", pluginId);
+
+          return notifyFromPlugin(
+            pluginId,
+            asString(args[0], "title"),
+            asString(args[1], "message"),
+          );
+        }
+
+        default:
+          throw new Error(`插件 ${pluginId} 调用了未知的宿主能力：${method}`);
+      }
+    },
   };
-
-  if (granted.has("fs:read") || granted.has("fs:write")) {
-    host.fs = createGuardedFsApi(pluginId, granted);
-  }
-
-  if (granted.has("log:write")) {
-    host.log = createGuardedLogApi(pluginId, granted);
-  }
-
-  if (granted.has("ui:notify")) {
-    host.notify = createGuardedNotifyApi(pluginId, granted);
-  }
-
-  return host;
 }
 
 /**
- * 按权限逐方法裁剪包内文件读写能力。
+ * 校验并取出字符串参数。
+ *
+ * Worker 侧传来的参数一律按不可信输入处理：不做这层校验的话，一个类型错误会被
+ * 一路带到 Rust 命令层，最终以 serde 反序列化失败的形式出现，排查时很难定位到插件。
  */
-function createGuardedFsApi(
-  pluginId: string,
-  granted: ReadonlySet<PluginPermission>,
-): PluginFsApi {
-  const api: PluginFsApi = {};
-
-  if (granted.has("fs:read")) {
-    api.read = async (relativePath: string) => {
-      assertPluginPermission(granted, "fs:read", pluginId);
-
-      return readPluginPackageFile(pluginId, relativePath);
-    };
+function asString(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`宿主能力调用参数 ${label} 必须是字符串`);
   }
 
-  if (granted.has("fs:write")) {
-    api.write = async (relativePath: string, contents: string) => {
-      assertPluginPermission(granted, "fs:write", pluginId);
-
-      return writePluginPackageFile(pluginId, relativePath, contents);
-    };
-  }
-
-  return api;
+  return value;
 }
 
 /**
- * 构建插件日志接口。
+ * 校验并归一化网络请求参数。
+ *
+ * 刻意只挑出已知字段而不是整体透传：插件可以往对象里塞任意键，
+ * 透传等于把「请求长什么样」的决定权交回给了插件。
  */
-function createGuardedLogApi(
-  pluginId: string,
-  granted: ReadonlySet<PluginPermission>,
-): PluginLogApi {
-  const append = async (message: string, level: string) => {
-    assertPluginPermission(granted, "log:write", pluginId);
+function asHttpRequest(value: unknown): PluginHttpRequest {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("net.request 的参数必须是请求对象");
+  }
 
-    return writePluginLog(pluginId, level, message);
-  };
+  const candidate = value as Partial<PluginHttpRequest>;
+
+  if (typeof candidate.url !== "string") {
+    throw new Error("net.request 缺少字符串类型的 url");
+  }
 
   return {
-    error: (message: string) => append(message, "error"),
-    info: (message: string) => append(message, "info"),
-    write: (message: string, level = "info") => append(message, level),
+    body: typeof candidate.body === "string" ? candidate.body : undefined,
+    headers: isStringRecord(candidate.headers) ? candidate.headers : undefined,
+    method: typeof candidate.method === "string" ? candidate.method : undefined,
+    url: candidate.url,
   };
 }
 
 /**
- * 构建通知接口。
+ * 判断值是否为「字符串到字符串」的普通记录。
  */
-function createGuardedNotifyApi(
-  pluginId: string,
-  granted: ReadonlySet<PluginPermission>,
-): PluginNotifyApi {
-  return async (title: string, message: string) => {
-    assertPluginPermission(granted, "ui:notify", pluginId);
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
 
-    return notifyFromPlugin(pluginId, title, message);
-  };
+  return Object.values(value).every((entry) => typeof entry === "string");
 }

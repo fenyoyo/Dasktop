@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PluginScanResult } from "./types";
+import type { PluginHttpRequest, PluginHttpResponse, PluginScanResult } from "./types";
 
 /**
  * 插件宿主命令的前端封装。
@@ -58,6 +58,16 @@ export function writePluginLog(pluginId: string, level: string, message: string)
  */
 export function notifyFromPlugin(pluginId: string, title: string, message: string): Promise<void> {
   return invoke("notify_from_plugin", { pluginId, title, message });
+}
+
+/**
+ * 代表插件发起 HTTP 请求。后端会强制超时与响应体体积上限，并记录请求与结果状态。
+ */
+export function requestFromPlugin(
+  pluginId: string,
+  request: PluginHttpRequest,
+): Promise<PluginHttpResponse> {
+  return invoke<PluginHttpResponse>("plugin_http_request", { pluginId, request });
 }
 
 /**
