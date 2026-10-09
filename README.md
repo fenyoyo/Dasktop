@@ -67,6 +67,23 @@ Dasktop 适合经常在桌面临时保存资料、项目文件、软件快捷方
 
 
 
+## 开发
+
+想从源码运行或参与开发，见 [开发指南](docs/development.md)。其中包含环境要求、
+一键环境检查脚本（`scripts/setup-dev.ps1`）以及开发过程中常见问题的排查方法：
+
+```powershell
+# 检查开发环境是否齐备（只读，不改动任何文件）
+.\scripts\setup-dev.ps1
+
+# 检查并自动补装缺失依赖，然后启动开发
+.\scripts\setup-dev.ps1 -Install
+pnpm install
+pnpm tauri dev
+```
+
+
+
 ## 反馈
 
 Dasktop 仍处于早期公开版本。如果你遇到文件拖拽、运行时依赖、窗口层级、卸载残留或不同 Windows 版本兼容性问题，欢迎通过 [Issues](https://github.com/AugSakura/Dasktop/issues) 提供复现路径

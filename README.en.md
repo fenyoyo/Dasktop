@@ -54,6 +54,22 @@ Dasktop is designed for users who often keep temporary materials, project files,
 - Operating system: Windows
 - App name: Dasktop
 
+## Development
+
+To run from source, see the [Development Guide](docs/development.md) (Chinese). It
+covers prerequisites, a one-command environment check (`scripts/setup-dev.ps1`), and
+troubleshooting for common build issues:
+
+```powershell
+# Check the dev environment (read-only, changes nothing)
+.\scripts\setup-dev.ps1
+
+# Check and auto-install missing dependencies, then start developing
+.\scripts\setup-dev.ps1 -Install
+pnpm install
+pnpm tauri dev
+```
+
 ## Feedback
 
 Dasktop is still in an early public version. If you run into file drag-and-drop issues, runtime dependency problems, window layering behavior, uninstall leftovers, or compatibility issues across Windows versions, feel free to open an [Issue](https://github.com/AugSakura/Dasktop/issues) with reproduction steps.
