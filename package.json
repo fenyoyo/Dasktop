@@ -18,7 +18,8 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "verify:plugins": "node scripts/verify-plugins.mjs"
   },
   "dependencies": {
     "@lucide/vue": "1.18.0",
