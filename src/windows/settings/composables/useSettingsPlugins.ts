@@ -21,8 +21,8 @@ export interface SettingsPluginsContext {
   initializePlugins: () => Promise<void>;
   /** 用系统资源管理器打开插件根目录。 */
   openPluginsRoot: () => Promise<void>;
-  /** 打开指定插件的界面窗口，展示它的入口页面。 */
-  openPluginPage: (pluginId: string, pluginName: string, entry: string) => Promise<void>;
+  /** 打开插件的界面窗口，展示它的入口页面；窗口已存在时调到前台。 */
+  openPluginPage: (pluginId: string) => Promise<void>;
   /** 重新扫描插件目录。 */
   reloadPlugins: () => Promise<void>;
   /** 只读运行时快照，面板直接消费。 */
@@ -54,13 +54,9 @@ export function useSettingsPlugins(): SettingsPluginsContext {
     }
   }
 
-  async function openPluginPage(
-    pluginId: string,
-    pluginName: string,
-    entry: string,
-  ): Promise<void> {
+  async function openPluginPage(pluginId: string): Promise<void> {
     try {
-      await openPluginWindow(pluginId, pluginName, entry);
+      await openPluginWindow(pluginId);
     } catch (error) {
       // 窗口创建失败不该让设置页崩掉：插件界面是可选功能，失败只记日志。
       console.error("[plugin] 打开插件界面失败", error);

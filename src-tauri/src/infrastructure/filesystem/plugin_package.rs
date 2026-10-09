@@ -415,6 +415,7 @@ fn has_child_directory(root: &Path) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::plugin::PLUGIN_PERMISSIONS;
 
     /// 测试用临时插件包目录，析构时自动清理。
     struct TempPackage {
@@ -577,6 +578,26 @@ mod tests {
                 package.package_id,
                 manifest.entry
             );
+
+            // 声明了宿主不认识的能力时，示例包会被加载器标成不可用——而它正是用来
+            // 「照着改」的模板，坏了最难被发现：用户只会以为自己哪里抄错了。
+            for permission in &manifest.permissions {
+                assert!(
+                    PLUGIN_PERMISSIONS.contains(&permission.as_str()),
+                    "示例包 {} 声明了宿主不认识的能力：{permission}",
+                    package.package_id
+                );
+            }
+
+            // 空文件同样是坏样本：`.js` 落盘成空文件时页面照常打开，只是什么都不做。
+            for file in package.files {
+                assert!(
+                    !file.source.trim().is_empty(),
+                    "示例包 {} 的 {} 内容为空",
+                    package.package_id,
+                    file.file_name
+                );
+            }
         }
     }
 

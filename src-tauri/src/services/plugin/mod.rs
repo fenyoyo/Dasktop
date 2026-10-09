@@ -1,12 +1,25 @@
 //! 插件服务层。
 //!
-//! 负责三件事：把「应用数据目录」翻译成插件根目录、把基础设施的包内文件操作包装成
-//! 面向插件 id 的用例、把宿主通知落到 Tauri 事件上。
+//! 负责四件事：把「应用数据目录」翻译成插件根目录、把基础设施的包内文件操作包装成
+//! 面向插件 id 的用例、把宿主通知落到 Tauri 事件上、以及为插件窗口准备身份与能力。
 //!
 //! 插件界面是插件作者自己写的网页，宿主通过 `plugin` 自定义协议把这些文件喂给插件
 //! 窗口（见 [`protocol`]），因此这里没有「加载插件代码」这一步——宿主从不执行插件
-//! 的逻辑，只负责把它的页面交出去。
+//! 的逻辑，只负责把它的页面交出去、并在它回来调能力时判断该不该给。
+//!
+//! # 能力判定的两个前提
+//!
+//! 五条能力命令的入口都做两件事，缺一不可：
+//!
+//! 1. **身份取自调用方窗口标签**，而不是命令参数里的 `plugin_id`（见
+//!    [`resolve_caller_plugin_id`]）。参数是插件自己填的，采纳它等于让插件 A 声明成 B。
+//! 2. **权限取自该插件的清单**（见 [`require_permission`]）。ACL 的粒度是窗口、清单的
+//!    粒度是插件，两者对不上，所以「这个插件有没有声明这条能力」只能在这里判。
+//!
+//! 宿主自己的审计日志走 [`append_log`]，**不再要求插件声明 `log:write`**：那是宿主在
+//! 记账，不是插件在调能力，要求声明会把「能上网」和「能写日志」这两件事绑在一起。
 
+mod bridge;
 mod protocol;
 
 pub use protocol::handle_plugin_asset_request;
@@ -17,8 +30,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::plugin::{
-    PluginHttpRequest, PluginHttpResponse, PluginScanResult, PLUGIN_LOG_DIR_NAME,
-    PLUGIN_NOTIFICATION_EVENT, PLUGIN_PROTOCOL_SCHEME, PLUGIN_ROOT_DIR_NAME,
+    PluginHttpRequest, PluginHttpResponse, PluginManifest, PluginScanResult, PLUGIN_LOG_DIR_NAME,
+    PLUGIN_NOTIFICATION_EVENT, PLUGIN_PERMISSION_FS_READ, PLUGIN_PERMISSION_FS_WRITE,
+    PLUGIN_PERMISSION_LOG_WRITE, PLUGIN_PERMISSION_NET_REQUEST, PLUGIN_PERMISSION_UI_NOTIFY,
+    PLUGIN_PERMISSIONS, PLUGIN_PROTOCOL_SCHEME, PLUGIN_ROOT_DIR_NAME, PLUGIN_WINDOW_LABEL_PREFIX,
+    PLUGIN_WINDOW_MIN_SIZE, PLUGIN_WINDOW_SIZE,
 };
 use crate::infrastructure::filesystem::{plugin_log, plugin_package};
 use crate::infrastructure::http;
@@ -52,8 +68,8 @@ pub fn scan_plugin_packages(app: &AppHandle) -> Result<PluginScanResult, String>
 /// 插件页面资源的 URL 前缀，按平台给出。
 ///
 /// WebView 对自定义协议的寻址方式并不跨平台一致：Windows（WebView2）与 Android 把它
-/// 映射成 `http://<scheme>.localhost`，其余平台是 `<scheme>://localhost`。前端据此拼接
-/// `/<插件id>/<相对路径>`，所以这条平台判断只放在这里一处，前端不重复实现一遍。
+/// 映射成 `http://<scheme>.localhost`，其余平台是 `<scheme>://localhost`。这条判断只在
+/// 这里存在一份，页面地址由 [`resolve_page_url`] 直接给出完整结果，前端不重复实现。
 pub fn asset_base_url() -> String {
     if cfg!(any(windows, target_os = "android")) {
         format!("http://{PLUGIN_PROTOCOL_SCHEME}.localhost")
@@ -62,12 +78,84 @@ pub fn asset_base_url() -> String {
     }
 }
 
+/// 把「调用方窗口」与「插件自报的 id」收敛成可信的插件 id。
+///
+/// 插件窗口的标签是 `plugin_<id>`，由宿主在建窗时写死，插件页面改不了它（改标签要
+/// `core:window` 权限，而插件窗口一条 Tauri 权限都没有）。标签形如 `plugin_` 就一律
+/// 以标签为准，**忽略插件传来的 id**；不是插件窗口（宿主自己的窗口）时才采纳参数。
+///
+/// 这条规则换来了一个不变量：**插件只能以自己的身份调能力**。没有它，插件在页面里
+/// 传一个别人的 id 就能读写别人的包内文件、以别人的名义发网络请求和通知。
+pub fn resolve_caller_plugin_id(window_label: &str, claimed_plugin_id: &str) -> String {
+    window_label
+        .strip_prefix(PLUGIN_WINDOW_LABEL_PREFIX)
+        .map(str::to_string)
+        .unwrap_or_else(|| claimed_plugin_id.to_string())
+}
+
+/// 为插件开一个界面窗口；窗口已存在时只把它调到前台。
+///
+/// 建窗放在 Rust 侧而不是前端，原因是**能力桥只能在建窗时注入**：Tauri 的前端窗口选项
+/// 不透出初始化脚本，而 `window.dasktop` 必须在插件自己的脚本执行之前就绪。顺带把
+/// 「已存在就聚焦」的判断也收到一处，不会出现前后端各判一次还不一致。
+pub fn open_plugin_window(app: &AppHandle, plugin_id: &str) -> Result<(), String> {
+    if !plugin_package::is_valid_plugin_id(plugin_id) {
+        return Err(format!("非法插件 id：{plugin_id}"));
+    }
+
+    let label = format!("{PLUGIN_WINDOW_LABEL_PREFIX}{plugin_id}");
+
+    // 已存在时不重新导航：用户在插件页面里可能已经翻到第二页，重载会把他弹回入口。
+    if let Some(existing) = app.get_webview_window(&label) {
+        // 先还原再显示：上次可能是被最小化关掉的，只 show 会留下一个不可见的窗口，
+        // 用户点「打开」看起来毫无反应。
+        existing
+            .unminimize()
+            .map_err(|error| format!("插件窗口还原失败：{error}"))?;
+        existing
+            .show()
+            .map_err(|error| format!("插件窗口显示失败：{error}"))?;
+
+        return existing
+            .set_focus()
+            .map_err(|error| format!("插件窗口聚焦失败：{error}"));
+    }
+
+    let package_dir = resolve_package_dir(app, plugin_id)?;
+    let manifest = plugin_package::read_manifest(&package_dir)?;
+
+    ensure_known_permissions(plugin_id, &manifest)?;
+    ensure_entry_page(&package_dir, &manifest)?;
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        &label,
+        resolve_webview_target(plugin_id, &manifest.entry)?,
+    )
+    .title(format!("{} - Dasktop 插件", manifest.name))
+    .inner_size(PLUGIN_WINDOW_SIZE.0, PLUGIN_WINDOW_SIZE.1)
+    .min_inner_size(PLUGIN_WINDOW_MIN_SIZE.0, PLUGIN_WINDOW_MIN_SIZE.1)
+    .initialization_script(bridge::build_script(plugin_id, &manifest)?)
+    .build()
+    .map_err(|error| format!("插件窗口创建失败：{error}"))?;
+
+    window
+        .show()
+        .map_err(|error| format!("插件窗口显示失败：{error}"))?;
+
+    window
+        .set_focus()
+        .map_err(|error| format!("插件窗口聚焦失败：{error}"))
+}
+
 /// 读取插件包内文本文件，对应 `fs:read` 能力。
 pub fn read_plugin_file(
     app: &AppHandle,
     plugin_id: &str,
     relative_path: &str,
 ) -> Result<String, String> {
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_FS_READ)?;
+
     let package_dir = resolve_package_dir(app, plugin_id)?;
 
     plugin_package::read_package_file(&package_dir, relative_path)
@@ -80,41 +168,39 @@ pub fn write_plugin_file(
     relative_path: &str,
     contents: &str,
 ) -> Result<(), String> {
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_FS_WRITE)?;
+
     let package_dir = resolve_package_dir(app, plugin_id)?;
 
     plugin_package::write_package_file(&package_dir, relative_path, contents)
 }
 
 /// 追加插件运行日志，对应 `log:write` 能力。
-///
-/// 这里不校验插件包是否存在：日志是排查手段，插件包被删掉之后仍应能留下最后一条记录。
-/// 但 id 必须过白名单校验——它直接参与日志文件名拼接。
 pub fn write_plugin_log(
     app: &AppHandle,
     plugin_id: &str,
     level: &str,
     message: &str,
 ) -> Result<(), String> {
-    if !plugin_package::is_valid_plugin_id(plugin_id) {
-        return Err(format!("非法插件 id：{plugin_id}"));
-    }
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_LOG_WRITE)?;
 
-    let log_dir = resolve_log_dir(app)?;
-
-    plugin_log::append_log(&log_dir, plugin_id, level, message)
+    append_log(app, plugin_id, level, message)
 }
 
 /// 发送宿主通知，对应 `ui:notify` 能力。
 ///
 /// 通知同时落日志：宿主界面不可见时（例如自启静默驻留托盘期间）事件没有订阅者，
-/// 此时日志是唯一能回溯插件行为的通道。
+/// 此时日志是唯一能回溯插件行为的通道。这一行日志走 [`append_log`]，不需要插件
+/// 额外声明 `log:write`——那是宿主为这次通知留的凭据。
 pub fn notify_from_plugin(
     app: &AppHandle,
     plugin_id: &str,
     title: &str,
     message: &str,
 ) -> Result<(), String> {
-    write_plugin_log(app, plugin_id, "notify", &format!("{title}：{message}"))?;
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_UI_NOTIFY)?;
+
+    append_log(app, plugin_id, "notify", &format!("{title}：{message}"))?;
 
     let payload = PluginNotificationPayload {
         plugin_id: plugin_id.to_string(),
@@ -140,9 +226,7 @@ pub async fn http_request(
     plugin_id: &str,
     request: PluginHttpRequest,
 ) -> Result<PluginHttpResponse, String> {
-    if !plugin_package::is_valid_plugin_id(plugin_id) {
-        return Err(format!("非法插件 id：{plugin_id}"));
-    }
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_NET_REQUEST)?;
 
     let method = request
         .method
@@ -151,11 +235,11 @@ pub async fn http_request(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "GET".to_string());
 
-    write_plugin_log(app, plugin_id, "net", &format!("{method} {}", request.url))?;
+    append_log(app, plugin_id, "net", &format!("{method} {}", request.url))?;
 
     let response = http::send(&request).await?;
 
-    write_plugin_log(
+    append_log(
         app,
         plugin_id,
         "net",
@@ -171,6 +255,140 @@ pub fn open_plugin_root(app: &AppHandle) -> Result<(), String> {
     plugin_package::ensure_root(&root)?;
 
     shell_file::open_folder_in_explorer(&root.to_string_lossy())
+}
+
+/* -------------------------------------------------------------------------- */
+/* 能力判定                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/// 确认插件清单声明了某项能力。
+///
+/// 这条判定不能在别处替代：capability 是按**窗口**授权的，而清单权限是按**插件**声明
+/// 的。插件窗口那一份 capability 只能把五条能力命令整体授予「所有插件窗口」，所以
+/// 「具体这个插件有没有声明」只有读到它的清单才知道。
+///
+/// 每次都重读清单而不是缓存：插件是磁盘上的目录，作者改完清单再点「重新加载」就该
+/// 生效；缓存会让「改了没反应」变成一个需要排查的问题，而重读的代价只是一次小文件读取。
+fn require_permission(app: &AppHandle, plugin_id: &str, permission: &str) -> Result<(), String> {
+    let package_dir = resolve_package_dir(app, plugin_id)?;
+    let manifest = plugin_package::read_manifest(&package_dir)?;
+
+    if manifest
+        .permissions
+        .iter()
+        .any(|declared| declared == permission)
+    {
+        return Ok(());
+    }
+
+    Err(format!(
+        "插件 {plugin_id} 未声明能力 {permission}：需要在它的插件包目录下 plugin.json 的 permissions 里加上这一项"
+    ))
+}
+
+/// 确认清单里没有宿主不认识的能力。
+///
+/// 与前端加载器是同一条规则，但**必须也在这里判一遍**：窗口是命令直接开的，只在前端
+/// 拦的话这条规则可以被绕过，而绕过的后果是桥按一份不完整的权限集合挂载——某个能力
+/// 静默不出现，作者只会以为宿主坏了。
+fn ensure_known_permissions(plugin_id: &str, manifest: &PluginManifest) -> Result<(), String> {
+    let unknown: Vec<&str> = manifest
+        .permissions
+        .iter()
+        .map(String::as_str)
+        .filter(|permission| !PLUGIN_PERMISSIONS.contains(permission))
+        .collect();
+
+    if unknown.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "插件 {plugin_id} 声明了宿主不认识的能力：{}",
+        unknown.join("、")
+    ))
+}
+
+/// 确认入口页面真实存在。
+///
+/// 扫描期已经查过一次，但那个结果只存在于前端快照里；从「扫描过」到「用户点开」之间，
+/// 作者完全可能把文件挪走。这里失败会直接给出文件名，而少了这一步用户看到的是一片空白。
+fn ensure_entry_page(package_dir: &std::path::Path, manifest: &PluginManifest) -> Result<(), String> {
+    match plugin_package::resolve_sandboxed_path(package_dir, &manifest.entry) {
+        Ok(path) if path.is_file() => Ok(()),
+        Ok(_) => Err(format!("入口页面不存在：{}", manifest.entry)),
+        Err(message) => Err(format!("入口页面路径非法：{}（{message}）", manifest.entry)),
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 页面地址                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/// 拼出插件入口页面的地址，并决定该用哪种 `WebviewUrl`。
+///
+/// 平台差异体现在 scheme 上：Windows 上自定义协议被映射成 `http`，其它平台是
+/// `plugin://`。这两种必须走 `WebviewUrl` 的不同分支——`External` 只接受 http/https，
+/// 拿 `plugin://` 去构造它会得到与预期不符的结果。
+fn resolve_webview_target(plugin_id: &str, entry: &str) -> Result<tauri::WebviewUrl, String> {
+    let url = resolve_page_url(plugin_id, entry)?;
+
+    Ok(if matches!(url.scheme(), "http" | "https") {
+        tauri::WebviewUrl::External(url)
+    } else {
+        tauri::WebviewUrl::CustomProtocol(url)
+    })
+}
+
+/// 拼出插件入口页面的完整地址。
+fn resolve_page_url(plugin_id: &str, entry: &str) -> Result<tauri::Url, String> {
+    let mut url: tauri::Url = asset_base_url()
+        .parse()
+        .map_err(|error| format!("插件页面地址前缀无法解析：{error}"))?;
+
+    url.set_path(&encode_page_path(plugin_id, entry));
+
+    Ok(url)
+}
+
+/// 把插件 id 与入口路径编码成 URL 路径。
+///
+/// 必须是**多段**形式，不能图省事把整串路径塞进一段：页面里的相对链接
+/// （`./history.html`）是相对当前路径的目录解析的，压成一段之后它会丢掉插件 id，
+/// 协议处理器就再也定位不到包目录。这也是为什么不用 Tauri 的 `convertFileSrc` ——
+/// 它对整串做 `encodeURIComponent`，`/` 会一起变成 `%2F`。
+fn encode_page_path(plugin_id: &str, entry: &str) -> String {
+    let mut path = String::with_capacity(plugin_id.len() + entry.len() + 2);
+    path.push('/');
+    path.push_str(plugin_id);
+
+    for segment in entry.split('/').filter(|segment| !segment.is_empty()) {
+        path.push('/');
+        // `Url::set_path` 不编码 `%`，而路径里一个裸 `%` 就是非法转义序列
+        // （文件名写成 `100%.html` 就够了，WebView 可能整条地址都不认）。
+        path.push_str(&segment.replace('%', "%25"));
+    }
+
+    path
+}
+
+/* -------------------------------------------------------------------------- */
+/* 内部实现                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/// 落一行插件日志，不做权限判定。
+///
+/// 供宿主自己的记账使用（网络请求的前后记录、通知的凭据）。插件主动调 `log:write`
+/// 走的是 [`write_plugin_log`]，那里会校验清单。
+fn append_log(app: &AppHandle, plugin_id: &str, level: &str, message: &str) -> Result<(), String> {
+    // id 必须过白名单校验——它直接参与日志文件名拼接。
+    if !plugin_package::is_valid_plugin_id(plugin_id) {
+        return Err(format!("非法插件 id：{plugin_id}"));
+    }
+
+    let log_dir = resolve_log_dir(app)?;
+
+    plugin_log::append_log(&log_dir, plugin_id, level, message)
 }
 
 /// 解析插件根目录路径；只计算路径，不保证目录已经存在。
@@ -198,4 +416,86 @@ fn resolve_package_dir(app: &AppHandle, plugin_id: &str) -> Result<PathBuf, Stri
     let root = resolve_plugin_root(app)?;
 
     plugin_package::resolve_package_dir(&root, plugin_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_label_wins_over_claimed_id() {
+        // 插件窗口里传来的 id 一律不采纳：那是插件自己填的，采纳它等于让插件 A
+        // 声明成 B 去读写 B 的包内文件。
+        assert_eq!(
+            resolve_caller_plugin_id("plugin_http-console", "hello-dasktop"),
+            "http-console"
+        );
+    }
+
+    #[test]
+    fn host_windows_keep_the_argument() {
+        // 宿主自己的窗口没有插件身份，只能采纳参数（宿主代码是可信的）。
+        assert_eq!(
+            resolve_caller_plugin_id("main", "http-console"),
+            "http-console"
+        );
+        assert_eq!(
+            resolve_caller_plugin_id("box_a1b2c3", "hello-dasktop"),
+            "hello-dasktop"
+        );
+    }
+
+    #[test]
+    fn label_prefix_is_stripped_only_once() {
+        // 插件 id 本身允许下划线，`plugin_plugin_x` 必须解析回 `plugin_x`。
+        assert_eq!(
+            resolve_caller_plugin_id("plugin_plugin_x", "ignored"),
+            "plugin_x"
+        );
+    }
+
+    #[test]
+    fn page_path_stays_multi_segment() {
+        // 压成一段会让页面里的相对链接丢掉插件 id，协议处理器就定位不到包目录。
+        assert_eq!(
+            encode_page_path("http-console", "index.html"),
+            "/http-console/index.html"
+        );
+        assert_eq!(
+            encode_page_path("http-console", "pages/history.html"),
+            "/http-console/pages/history.html"
+        );
+    }
+
+    #[test]
+    fn page_path_encodes_each_segment_separately() {
+        // 段落里的空格与中文交给 `set_path` 编码，但 `/` 必须保持为分隔符。
+        let url = resolve_page_url("demo", "子目录/说明.html").expect("地址应可构造");
+
+        assert_eq!(
+            url.path(),
+            "/demo/%E5%AD%90%E7%9B%AE%E5%BD%95/%E8%AF%B4%E6%98%8E.html"
+        );
+    }
+
+    #[test]
+    fn page_path_escapes_bare_percent() {
+        // `set_path` 不编码 `%`，裸 `%` 会让整条地址变成非法转义序列。
+        let url = resolve_page_url("demo", "100%.html").expect("地址应可构造");
+
+        assert_eq!(url.path(), "/demo/100%25.html");
+    }
+
+    #[test]
+    fn page_target_follows_platform_scheme() {
+        // Windows 上自定义协议被映射成 http，必须走 External；其它平台是
+        // `plugin://`，必须走 CustomProtocol。两条分支都用真实前缀验证一遍。
+        let target = resolve_webview_target("demo", "index.html").expect("目标应可构造");
+
+        if cfg!(any(windows, target_os = "android")) {
+            assert!(matches!(target, tauri::WebviewUrl::External(_)));
+        } else {
+            assert!(matches!(target, tauri::WebviewUrl::CustomProtocol(_)));
+        }
+    }
 }

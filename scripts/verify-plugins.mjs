@@ -2,17 +2,19 @@
 /**
  * 插件包契约验证。
  *
- * 插件界面是插件包里的网页，完全不在 TypeScript 的覆盖范围内——`vue-tsc` 与
- * `vite build` 都不会看一眼 `plugins/` 目录。清单里文件名写错、页面里的相对链接指向
- * 不存在的文件、声明了宿主不认识的权限，这些问题构建阶段全都发现不了，要等用户打开
- * 插件窗口才暴露，而那时候他能看到的只是一片空白。
+ * 插件界面是插件包里的网页与脚本，完全不在 TypeScript 的覆盖范围内——`vue-tsc` 与
+ * `vite build` 都不会看一眼 `plugins/` 目录。清单里文件名写错、页面里的引用指向不存在的
+ * 文件、模块没被任何页面引入、用了没声明过的宿主能力，这些问题构建阶段全都发现不了，
+ * 要等用户打开插件窗口才暴露，而那时候他能看到的只是一片空白或者「点了没反应」。
  *
  * 这个脚本把这几类检查提到提交前：
  *
- * 1. 清单可解析、id 与目录名一致、entry 非空且指向 HTML；
- * 2. 入口页面真实存在；
- * 3. 包内每个 HTML 里的相对引用都指向真实存在的文件，且没有逃出包目录；
- * 4. 清单声明的权限都在宿主已知集合内（集合从 `types.ts` 实时解析，不另抄一份）。
+ * 1. 清单可解析、id 与目录名一致、entry 非空且指向 HTML 并真实存在；
+ * 2. 清单声明的权限都在宿主已知集合内，且与 Rust 侧的权限常量集合一致；
+ * 3. 包内每个 HTML / JS 里的相对引用都指向真实存在的文件，且没有逃出包目录；
+ * 4. 包内每个 `.js` 都被某处引用到——写好了却没人引入，运行期就是一段死代码；
+ * 5. 脚本里出现的每一处 `dasktop.<命名空间>.<方法>(...)` 都在能力桥的映射表里，
+ *    且对应权限已在清单中声明。
  *
  * 零依赖，直接 `node scripts/verify-plugins.mjs`，不需要先跑 `pnpm install`。
  */
@@ -24,6 +26,9 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pluginsRoot = join(repoRoot, "plugins");
+const typesPath = join(repoRoot, "src/entities/pluginPackage/types.ts");
+const contractPath = join(repoRoot, "src-tauri/src/domain/plugin/contract.rs");
+const bridgePath = join(repoRoot, "src-tauri/src/services/plugin/bridge.js");
 
 /**
  * 与宿主扫描保持一致的目录跳过规则：`.` 与 `_` 开头的目录是留给宿主与作者自己的。
@@ -34,12 +39,30 @@ const RESERVED_PREFIXES = "._";
  * 从 HTML 里挑出 href / src 属性。不引 HTML 解析器：这里只需要属性值，
  * 一层正则足够，也避免为一个校验脚本引入依赖。
  */
-const LINK_PATTERN = /(?:href|src)\s*=\s*["']([^"']*)["']/gi;
+const HTML_REF_PATTERN = /(?:href|src)\s*=\s*["']([^"']*)["']/gi;
+
+/**
+ * 从 JS 里挑出模块引用：`from "./x.js"`、`import "./x.js"`、`import("./x.js")`。
+ */
+const JS_REF_PATTERN = /(?:from\s*|import\s*\(?\s*)["']([^"']+)["']/g;
+
+/**
+ * 能力桥方法的调用点：`dasktop.net.request(`。
+ *
+ * 只认这种「三段且带括号」的写法，`dasktop.has(...)` 与 `dasktop.plugin.id` 都不会命中。
+ */
+const BRIDGE_CALL_PATTERN = /\bdasktop\.([a-z]+)\.([a-z]+)\s*\(/g;
 
 /**
  * 不需要做存在性检查的引用前缀。
  */
 const EXTERNAL_PREFIXES = ["//", "data:", "http:", "https:", "javascript:", "mailto:", "tel:"];
+
+/**
+ * 带 scheme 的模块说明符（`https://…`、`data:…`）。这些交给 WebView 自己解析，
+ * 不按包内文件处理。
+ */
+const SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
 
 /**
  * 包内相对引用的解析基准。
@@ -62,10 +85,11 @@ function fail(pluginId, message) {
 
 async function main() {
   const knownPermissions = await loadKnownPermissions();
+  const bridgeCapabilities = await loadBridgeCapabilities();
   const pluginIds = await listPluginDirectories();
 
   for (const pluginId of pluginIds) {
-    results.push(await verifyPackage(pluginId, knownPermissions));
+    results.push(await verifyPackage(pluginId, knownPermissions, bridgeCapabilities));
   }
 
   report();
@@ -73,11 +97,47 @@ async function main() {
 
 await main();
 
+/* -------------------------------------------------------------------------- */
+/* 读取宿主侧的权威定义                                                        */
+/* -------------------------------------------------------------------------- */
+
 /**
- * 读取宿主认识的权限集合。
+ * 读取宿主认识的权限集合，并核对前后端两份定义一致。
+ *
+ * 两份定义分处 Rust 与 TypeScript，是必然的重复；与其假装只有一份，不如让脚本比对它们。
+ * 漂移的后果是插件声明了权限却在运行期被自己的宿主拒绝，而清单看起来完全正常。
  */
 async function loadKnownPermissions() {
-  const source = await readFile(join(repoRoot, "src/entities/pluginPackage/types.ts"), "utf8");
+  const frontend = await parseFrontendPermissions();
+  const backend = await parseBackendPermissions();
+
+  if (frontend.size === 0 || backend.size === 0) {
+    throw new Error("未能解析出权限集合，请检查 types.ts 与 contract.rs 的写法是否被改动");
+  }
+
+  for (const permission of frontend) {
+    if (!backend.has(permission)) {
+      fail(
+        "（宿主）",
+        `前端 PLUGIN_PERMISSIONS 里的「${permission}」在 Rust 的 contract.rs 里没有对应常量`,
+      );
+    }
+  }
+
+  for (const permission of backend) {
+    if (!frontend.has(permission)) {
+      fail(
+        "（宿主）",
+        `Rust 的 contract.rs 定义了「${permission}」，但前端 PLUGIN_PERMISSIONS 里没有它`,
+      );
+    }
+  }
+
+  return frontend;
+}
+
+async function parseFrontendPermissions() {
+  const source = await readFile(typesPath, "utf8");
   const block = source.match(/export const PLUGIN_PERMISSIONS = \[([\s\S]*?)\] as const;/);
 
   if (!block) {
@@ -85,6 +145,44 @@ async function loadKnownPermissions() {
   }
 
   return new Set([...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]));
+}
+
+async function parseBackendPermissions() {
+  const source = await readFile(contractPath, "utf8");
+
+  return new Set(
+    [...source.matchAll(/pub const PLUGIN_PERMISSION_[A-Z_]+:\s*&str\s*=\s*"([^"]+)"/g)].map(
+      (match) => match[1],
+    ),
+  );
+}
+
+/**
+ * 读取能力桥的「方法 → 权限」映射表。
+ *
+ * 表在 `bridge.js` 顶部，格式是刻意约定好的（一行一项，`"命名空间.方法": "权限"`），
+ * 这样校验脚本不必解析 JavaScript 就能拿到权威映射——插件实际用到的方法能不能调，
+ * 判据就是这张表。
+ */
+async function loadBridgeCapabilities() {
+  const source = await readFile(bridgePath, "utf8");
+  const block = source.match(/CAPABILITY_TABLE\s*=\s*\{([\s\S]*?)\n\s*\};/);
+
+  if (!block) {
+    throw new Error("未能从 services/plugin/bridge.js 解析出 CAPABILITY_TABLE");
+  }
+
+  const table = new Map();
+
+  for (const match of block[1].matchAll(/"([a-z]+\.[a-z]+)"\s*:\s*"([^"]+)"/g)) {
+    table.set(match[1], match[2]);
+  }
+
+  if (table.size === 0) {
+    throw new Error("services/plugin/bridge.js 的 CAPABILITY_TABLE 是空的");
+  }
+
+  return table;
 }
 
 /**
@@ -99,22 +197,26 @@ async function listPluginDirectories() {
     .sort();
 }
 
-/**
- * 校验单个插件包。
- */
-async function verifyPackage(pluginId, knownPermissions) {
+/* -------------------------------------------------------------------------- */
+/* 校验单个插件包                                                              */
+/* -------------------------------------------------------------------------- */
+
+async function verifyPackage(pluginId, knownPermissions, bridgeCapabilities) {
   const packageDir = join(pluginsRoot, pluginId);
+  const empty = { bridgeCalls: 0, files: 0, pages: 0, pluginId, refs: 0 };
   const manifest = await readManifest(pluginId, packageDir);
 
   if (!manifest) {
-    return { links: 0, pages: 0, pluginId };
+    return empty;
   }
 
   if (manifest.id !== pluginId) {
     fail(pluginId, `清单 id「${manifest.id}」与目录名「${pluginId}」不一致`);
   }
 
-  for (const permission of manifest.permissions ?? []) {
+  const declared = new Set(manifest.permissions ?? []);
+
+  for (const permission of declared) {
     if (!knownPermissions.has(permission)) {
       fail(pluginId, `声明了宿主不认识的能力：${permission}`);
     }
@@ -123,14 +225,14 @@ async function verifyPackage(pluginId, knownPermissions) {
   if (typeof manifest.entry !== "string" || manifest.entry.trim() === "") {
     fail(pluginId, "清单未声明 entry");
 
-    return { links: 0, pages: 0, pluginId };
+    return empty;
   }
 
   const entry = resolveInsidePackage(pluginId, manifest.entry);
   if (!entry) {
     fail(pluginId, `entry「${manifest.entry}」越出了插件包目录`);
 
-    return { links: 0, pages: 0, pluginId };
+    return empty;
   }
 
   if (!/\.html?$/i.test(manifest.entry)) {
@@ -141,15 +243,31 @@ async function verifyPackage(pluginId, knownPermissions) {
     fail(pluginId, `entry「${manifest.entry}」不存在`);
   }
 
-  const htmlFiles = await collectHtmlFiles(packageDir);
-  const linkCount = await verifyPageLinks(pluginId, packageDir, htmlFiles);
+  const htmlFiles = await collectFiles(packageDir, /\.html?$/i);
+  const scriptFiles = await collectFiles(packageDir, /\.m?js$/i);
 
-  return { links: linkCount, pages: htmlFiles.length, pluginId };
+  const referenced = new Set();
+  const refCount = await verifyReferences(pluginId, packageDir, htmlFiles, scriptFiles, referenced);
+
+  verifyScriptFilesAreReferenced(pluginId, packageDir, scriptFiles, referenced);
+
+  const bridgeCalls = await verifyBridgeUsage(
+    pluginId,
+    packageDir,
+    scriptFiles,
+    declared,
+    bridgeCapabilities,
+  );
+
+  return {
+    bridgeCalls,
+    files: htmlFiles.length + scriptFiles.length,
+    pages: htmlFiles.length,
+    pluginId,
+    refs: refCount,
+  };
 }
 
-/**
- * 读取并解析清单。
- */
 async function readManifest(pluginId, packageDir) {
   try {
     return JSON.parse(await readFile(join(packageDir, "plugin.json"), "utf8"));
@@ -161,9 +279,9 @@ async function readManifest(pluginId, packageDir) {
 }
 
 /**
- * 收集包内全部 HTML 文件。
+ * 收集包内指定后缀的文件。
  */
-async function collectHtmlFiles(packageDir) {
+async function collectFiles(packageDir, pattern) {
   const found = [];
 
   async function walk(directory) {
@@ -174,7 +292,7 @@ async function collectHtmlFiles(packageDir) {
 
       if (entry.isDirectory()) {
         await walk(fullPath);
-      } else if (/\.html?$/i.test(entry.name)) {
+      } else if (pattern.test(entry.name)) {
         found.push(fullPath);
       }
     }
@@ -186,36 +304,38 @@ async function collectHtmlFiles(packageDir) {
 }
 
 /**
- * 校验每个页面里的包内引用。
+ * 校验 HTML 与 JS 里的包内引用，并把被引用到的文件记进 `referenced`。
  */
-async function verifyPageLinks(pluginId, packageDir, htmlFiles) {
+async function verifyReferences(pluginId, packageDir, htmlFiles, scriptFiles, referenced) {
   let checked = 0;
 
-  for (const htmlPath of htmlFiles) {
-    const html = await readFile(htmlPath, "utf8");
-    const fromPage = relative(packageDir, htmlPath).split(sep).join("/");
+  for (const filePath of [...htmlFiles, ...scriptFiles]) {
+    const isScript = /\.m?js$/i.test(filePath);
+    const source = await readFile(filePath, "utf8");
+    const fromFile = relative(packageDir, filePath).split(sep).join("/");
 
-    for (const rawLink of extractLocalLinks(html)) {
-      if (rawLink.startsWith("/")) {
+    for (const rawRef of extractReferences(pluginId, fromFile, source, isScript)) {
+      if (rawRef.startsWith("/")) {
         fail(
           pluginId,
-          `${fromPage} 里的引用「${rawLink}」以 / 开头：绝对路径会被解析到协议根而不是插件目录，包内引用必须写成相对路径`,
+          `${fromFile} 里的引用「${rawRef}」以 / 开头：绝对路径会被解析到协议根而不是插件目录，包内引用必须写成相对路径`,
         );
         continue;
       }
 
-      // 相对当前页面所在目录解析，再判断落点是否还在包内。
-      const resolved = resolveInsidePackage(pluginId, `${dirname(fromPage)}/${rawLink}`);
+      // 相对当前文件所在目录解析，再判断落点是否还在包内。
+      const resolved = resolveInsidePackage(pluginId, `${dirname(fromFile)}/${rawRef}`);
 
       if (!resolved) {
-        fail(pluginId, `${fromPage} 里的引用「${rawLink}」越出了插件包目录`);
+        fail(pluginId, `${fromFile} 里的引用「${rawRef}」越出了插件包目录`);
         continue;
       }
 
+      referenced.add(resolved.filePath);
       checked += 1;
 
       if (!existsSync(resolved.filePath)) {
-        fail(pluginId, `${fromPage} 里的引用「${rawLink}」指向不存在的文件`);
+        fail(pluginId, `${fromFile} 里的引用「${rawRef}」指向不存在的文件`);
       }
     }
   }
@@ -226,10 +346,11 @@ async function verifyPageLinks(pluginId, packageDir, htmlFiles) {
 /**
  * 提取需要做存在性检查的引用。
  */
-function extractLocalLinks(html) {
-  const links = [];
+function extractReferences(pluginId, fromFile, source, isScript) {
+  const pattern = isScript ? JS_REF_PATTERN : HTML_REF_PATTERN;
+  const refs = [];
 
-  for (const match of html.matchAll(LINK_PATTERN)) {
+  for (const match of source.matchAll(pattern)) {
     // 去掉查询串与锚点：`./history.html#top` 要检查的是 `./history.html`。
     const raw = match[1].trim().split("#")[0].split("?")[0];
 
@@ -237,14 +358,83 @@ function extractLocalLinks(html) {
       continue;
     }
 
-    if (EXTERNAL_PREFIXES.some((prefix) => raw.startsWith(prefix))) {
+    if (SCHEME_PATTERN.test(raw)) {
+      // `https://…`、`data:…` 这类带 scheme 的说明符交给 WebView 自己解析。
       continue;
     }
 
-    links.push(raw);
+    if (!isScript && EXTERNAL_PREFIXES.some((prefix) => raw.startsWith(prefix))) {
+      continue;
+    }
+
+    if (isScript && !raw.startsWith(".") && !raw.startsWith("/")) {
+      fail(
+        pluginId,
+        `${fromFile} 里的模块引用「${raw}」是裸模块名：插件包没有打包器，也解析不了 node_modules，必须写成相对路径（./${raw}）`,
+      );
+      continue;
+    }
+
+    refs.push(raw);
   }
 
-  return links;
+  return refs;
+}
+
+/**
+ * 每个脚本文件都必须被某处引用到。
+ *
+ * 「文件写了但没人引入」是插件里最安静的一类 bug：页面照常打开、控制台没有任何报错，
+ * 只是那段逻辑从来没运行过。
+ */
+function verifyScriptFilesAreReferenced(pluginId, packageDir, scriptFiles, referenced) {
+  for (const filePath of scriptFiles) {
+    if (!referenced.has(filePath)) {
+      const name = relative(packageDir, filePath).split(sep).join("/");
+
+      fail(pluginId, `${name} 没有被任何页面或模块引用，它不会被执行`);
+    }
+  }
+}
+
+/**
+ * 校验能力桥的调用点。
+ *
+ * 插件调宿主能力必须既在桥的映射表里、又在清单里声明过。两处缺一都会静默失败：
+ * 映射表里没有的名字是拼错了（`dasktop.net.request` 写成 `dasktop.net.get`），
+ * 清单里没声明的权限会让桥根本不挂载那个命名空间。
+ */
+async function verifyBridgeUsage(pluginId, packageDir, scriptFiles, declared, bridgeCapabilities) {
+  let checked = 0;
+
+  for (const filePath of scriptFiles) {
+    const source = await readFile(filePath, "utf8");
+    const fromFile = relative(packageDir, filePath).split(sep).join("/");
+
+    for (const match of source.matchAll(BRIDGE_CALL_PATTERN)) {
+      const method = `${match[1]}.${match[2]}`;
+      const permission = bridgeCapabilities.get(method);
+
+      checked += 1;
+
+      if (!permission) {
+        fail(
+          pluginId,
+          `${fromFile} 调用了 dasktop.${method}(...)，但能力桥没有这个方法（可用的方法：${[...bridgeCapabilities.keys()].join("、")}）`,
+        );
+        continue;
+      }
+
+      if (!declared.has(permission)) {
+        fail(
+          pluginId,
+          `${fromFile} 用到了 dasktop.${method}(...)，需要能力 ${permission}，但 plugin.json 的 permissions 里没有声明`,
+        );
+      }
+    }
+  }
+
+  return checked;
 }
 
 /**
@@ -274,15 +464,16 @@ function resolveInsidePackage(pluginId, relativePath) {
   return { filePath: join(pluginsRoot, pluginId, inner), relativePath: inner };
 }
 
-/**
- * 输出结果。
- */
+/* -------------------------------------------------------------------------- */
+/* 输出                                                                        */
+/* -------------------------------------------------------------------------- */
+
 function report() {
   console.log("插件包契约验证\n");
 
   for (const result of results) {
     console.log(
-      `  ${result.pluginId.padEnd(18)} ${result.pages} 个页面 · ${result.links} 个包内引用`,
+      `  ${result.pluginId.padEnd(18)} ${result.files} 个文件 · ${result.refs} 个包内引用 · ${result.bridgeCalls} 处能力调用`,
     );
   }
 

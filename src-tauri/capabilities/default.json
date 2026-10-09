@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the settings window and runtime Box windows. Plugin windows are deliberately excluded: they load pages written by third parties, and WebView treats http://plugin.localhost as a local origin, so granting them any permission would let plugin code invoke host commands directly and bypass the permission gate. `allow-host-commands` is the app-level permission defined in src-tauri/permissions/host-commands.toml; without it Tauri would not check app commands at all (see the ACL note in that file).",
+  "description": "Capability for the settings window and runtime Box windows. Plugin windows are deliberately excluded: they load pages written by third parties, and WebView treats http://plugin.localhost as a local origin, so granting them the host commands would let plugin code invoke desktop/box/workspace operations directly and bypass the permission gate. Plugin windows get exactly the five host capabilities instead, via the separate `plugin` capability. `allow-host-commands` is the app-level permission defined in src-tauri/permissions/host-commands.toml; without it Tauri would not check app commands at all (see the ACL note in that file). Keep the two command sets disjoint.",
   "windows": ["main", "box_*", "box_menu", "drag_preview"],
   "webviews": ["main", "box_*", "box_menu", "drag_preview"],
   "permissions": [

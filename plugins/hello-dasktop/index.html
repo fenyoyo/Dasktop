@@ -45,6 +45,12 @@
         background: #fbfcfd;
       }
 
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
       code {
         font-family: "Cascadia Mono", Consolas, monospace;
         font-size: 12px;
@@ -67,13 +73,30 @@
         background: #f2f4f8;
       }
 
+      dl {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 4px 12px;
+        margin: 0;
+      }
+
+      dt {
+        color: #6b7280;
+      }
+
+      dd {
+        margin: 0;
+        word-break: break-all;
+      }
+
       @media (prefers-color-scheme: dark) {
         body {
           background: #1b1d22;
           color: #e6e8ee;
         }
 
-        .muted {
+        .muted,
+        dt {
           color: #9aa3b2;
         }
 
@@ -95,40 +118,33 @@
   </head>
   <body>
     <h1>Hello Dasktop</h1>
-    <p class="muted">最小的插件页面示例：一个 <code>plugin.json</code> 加一个 <code>index.html</code>。</p>
+    <p class="muted">
+      最小的插件示例：<code>plugin.json</code> + <code>index.html</code> + <code>index.js</code>。
+      脚本在页面里跑（不是别的地方），所以 DOM、状态、事件都在同一处。
+    </p>
 
     <div class="card">
-      <strong>你看到的一切都是这个 HTML 文件写出来的。</strong>
-      <p class="muted" style="margin: 8px 0 0">
-        宿主不拼界面、不塞样式，也不审查 DOM。它就是把这个文件当成一张网页打开——
-        跟浏览器打开本地文件没有区别。
+      <dl>
+        <dt>插件 id</dt>
+        <dd id="meta-id"></dd>
+        <dt>版本</dt>
+        <dd id="meta-version"></dd>
+        <dt>已授权能力</dt>
+        <dd id="meta-permissions"></dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <p style="margin: 0 0 10px">
+        宿主能力挂在 <code>window.dasktop</code> 上，只挂载清单里声明过的部分。
       </p>
+      <div class="row">
+        <button id="log" type="button">写一条日志</button>
+        <button id="notify" type="button">发一条通知</button>
+      </div>
+      <p class="muted" id="note" style="margin: 12px 0 0"></p>
     </div>
 
-    <div class="card">
-      <p style="margin: 0 0 8px">页面里的脚本照常运行：</p>
-      <button id="counter" type="button">点我加一</button>
-    </div>
-
-    <p class="muted" id="note" style="margin: 0"></p>
-
-    <script>
-      // 插件页面有自己的完整 JS 环境：可以用标准 Web API，也可以引包内的其它文件。
-      let count = 0;
-      const button = document.getElementById("counter");
-
-      button.addEventListener("click", () => {
-        count += 1;
-        button.textContent = `点了 ${count} 次`;
-      });
-
-      // 所有插件页面共享同一个 origin，localStorage 是**共用**的。
-      // 自己存东西一定要加插件名前缀，否则会和别的插件互相覆盖。
-      const storageKey = "hello-dasktop:opened-at";
-      const openedAt = new Date().toLocaleTimeString("zh-CN");
-
-      localStorage.setItem(storageKey, openedAt);
-      document.getElementById("note").textContent = `本次打开于 ${openedAt}（已存进 localStorage）`;
-    </script>
+    <script type="module" src="./index.js"></script>
   </body>
 </html>

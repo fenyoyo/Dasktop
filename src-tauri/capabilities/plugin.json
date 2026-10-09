@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "plugin",
+  "description": "Capability for plugin windows only. It grants exactly the five host capabilities a plugin may call (allow-plugin-capabilities) and nothing else. Host commands are deliberately absent: the ability to call them lives in the `default` capability, which never matches plugin_* labels. Keep the two command sets disjoint — verify-acl.mjs asserts it, and a shared permission set would mean every new host command also becomes a plugin capability.",
+  "windows": ["plugin_*"],
+  "webviews": ["plugin_*"],
+  "permissions": ["allow-plugin-capabilities"]
+}

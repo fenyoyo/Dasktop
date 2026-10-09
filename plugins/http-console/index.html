@@ -68,6 +68,11 @@
         background: #2559db;
       }
 
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+
       .card {
         border: 1px solid #e7e9ee;
         border-radius: 10px;
@@ -151,7 +156,7 @@
   <body>
     <h1>HTTP 控制台</h1>
     <p class="muted" style="margin: 0 0 4px">
-      多页插件示例：发一个 GET 请求，结果与历史都留在页面里。
+      请求由宿主进程发出（<code>dasktop.net.request</code>），不受同源策略约束。
       <a href="./history.html">查看历史 →</a>
     </p>
 
@@ -165,134 +170,6 @@
       <div id="result"><span class="muted">尚未发送请求。</span></div>
     </div>
 
-    <script>
-      /*
-       * 插件页面就是个普通网页，所以这里直接用浏览器的 fetch。
-       *
-       * 代价要说清楚：浏览器发起请求受同源策略约束，目标接口必须返回
-       * `Access-Control-Allow-Origin` 才能读到响应。若插件需要访问不开放 CORS 的接口，
-       * 就得改走宿主代为发起（宿主不受 CORS 限制，但要在 manifest 里声明能力）。
-       */
-      const DEFAULT_URL = "https://api.github.com/repos/tauri-apps/tauri";
-      const HISTORY_KEY = "http-console:history";
-      const HISTORY_LIMIT = 12;
-
-      const urlInput = document.getElementById("url");
-      const resultBox = document.getElementById("result");
-
-      urlInput.value = DEFAULT_URL;
-
-      document.getElementById("send").addEventListener("click", sendRequest);
-      urlInput.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          sendRequest();
-        }
-      });
-
-      async function sendRequest() {
-        const url = urlInput.value.trim();
-        if (!url) {
-          return;
-        }
-
-        renderPending(url);
-        const startedAt = performance.now();
-
-        try {
-          const response = await fetch(url);
-          const body = await response.text();
-
-          renderResult({
-            body,
-            elapsedMs: Math.round(performance.now() - startedAt),
-            ok: true,
-            status: response.status,
-            url,
-          });
-
-          remember({ status: response.status, url });
-        } catch (error) {
-          renderResult({
-            body: String(error && error.message ? error.message : error),
-            elapsedMs: Math.round(performance.now() - startedAt),
-            ok: false,
-            status: 0,
-            url,
-          });
-
-          remember({ status: 0, url });
-        }
-      }
-
-      function renderPending(url) {
-        resultBox.innerHTML = "";
-        resultBox.appendChild(hint(`正在请求 ${url} …`));
-      }
-
-      function renderResult({ body, elapsedMs, ok, status, url }) {
-        const preview = body.length > 600 ? `${body.slice(0, 600)}…（共 ${body.length} 字符）` : body;
-
-        resultBox.innerHTML = "";
-        resultBox.appendChild(fieldList([
-          ["状态", ok ? String(status) : "请求失败"],
-          ["耗时", `${elapsedMs} ms`],
-          ["地址", url],
-        ]));
-        resultBox.appendChild(codeBlock(preview || "（响应体为空）"));
-      }
-
-      function fieldList(entries) {
-        const list = document.createElement("dl");
-
-        for (const [key, value] of entries) {
-          const term = document.createElement("dt");
-          term.textContent = key;
-          const detail = document.createElement("dd");
-          detail.textContent = value;
-
-          list.append(term, detail);
-        }
-
-        return list;
-      }
-
-      function codeBlock(text) {
-        const block = document.createElement("pre");
-        block.textContent = text;
-
-        return block;
-      }
-
-      function hint(text) {
-        const span = document.createElement("span");
-        span.className = "muted";
-        span.textContent = text;
-
-        return span;
-      }
-
-      /*
-       * 所有插件页面共享同一个 origin，localStorage 是公用的，所以 key 一律带插件名前缀。
-       * 用 `innerHTML = ""` + createElement 而不是拼字符串，是为了不把响应体当 HTML 解析。
-       */
-      function remember(entry) {
-        const history = [
-          entry,
-          ...readHistory(),
-        ].slice(0, HISTORY_LIMIT);
-
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-      }
-
-      function readHistory() {
-        try {
-          const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      }
-    </script>
+    <script type="module" src="./index.js"></script>
   </body>
 </html>

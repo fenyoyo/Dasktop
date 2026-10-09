@@ -48,6 +48,51 @@ pub const PLUGIN_ID_MAX_LENGTH: usize = 64;
 /// 宿主向插件广播通知的事件名，前端宿主面板与插件通知出口共享同一常量。
 pub const PLUGIN_NOTIFICATION_EVENT: &str = "dasktop://plugin-notification";
 
+/// 插件窗口相对于应用窗口的尺寸与下限。
+///
+/// 放在领域层而不是服务层：窗口尺寸属于「插件界面长什么样」这一层次的约定，
+/// 与能力判定、路径解析无关，服务层只是执行者。
+pub const PLUGIN_WINDOW_SIZE: (f64, f64) = (560.0, 640.0);
+pub const PLUGIN_WINDOW_MIN_SIZE: (f64, f64) = (420.0, 360.0);
+
+/// 插件窗口标签前缀，完整标签形如 `plugin_<插件id>`。
+///
+/// **这个标签是插件身份的锚点，不能只当命名约定看**。五条能力命令都从调用方窗口的
+/// 标签反推插件 id，而不是采纳命令参数里那个 `plugin_id`——参数是插件自己填的，
+/// 采纳它等于让插件 A 能声明成 B 去读写 B 的包内文件。插件页面无法伪造自己的标签
+/// （改标签要 `core:window` 权限，插件窗口一条 Tauri 权限都没有）。
+///
+/// 与前端 `entities/pluginPackage/window.ts` 的 `PLUGIN_WINDOW_LABEL_PREFIX` 必须一致。
+pub const PLUGIN_WINDOW_LABEL_PREFIX: &str = "plugin_";
+
+/* -------------------------------------------------------------------------- */
+/* 能力权限字符串                                                              */
+/* -------------------------------------------------------------------------- */
+
+/// 以下是清单 `permissions` 里允许出现的权限字符串。
+///
+/// 与服务层「每条能力命令执行前查一遍清单」直接相关：字符串错一个字，插件就会在
+/// 运行期被自己的宿主拒绝，而清单看起来完全正常。与前端 `PLUGIN_PERMISSIONS`、
+/// `PLUGIN_PERMISSION_DEFINITIONS` 必须一一对应，`scripts/verify-plugins.mjs`
+/// 会比对两边的集合。
+pub const PLUGIN_PERMISSION_FS_READ: &str = "fs:read";
+pub const PLUGIN_PERMISSION_FS_WRITE: &str = "fs:write";
+pub const PLUGIN_PERMISSION_LOG_WRITE: &str = "log:write";
+pub const PLUGIN_PERMISSION_NET_REQUEST: &str = "net:request";
+pub const PLUGIN_PERMISSION_UI_NOTIFY: &str = "ui:notify";
+
+/// 宿主认识的全部能力权限。
+///
+/// 与逐条常量并列而不是只留这一个数组：命令里写的是具名常量，清单校验要的是集合，
+/// 两边都从同一处取，避免「加了权限但忘了加进集合」。
+pub const PLUGIN_PERMISSIONS: &[&str] = &[
+    PLUGIN_PERMISSION_FS_READ,
+    PLUGIN_PERMISSION_FS_WRITE,
+    PLUGIN_PERMISSION_LOG_WRITE,
+    PLUGIN_PERMISSION_NET_REQUEST,
+    PLUGIN_PERMISSION_UI_NOTIFY,
+];
+
 /// 插件网络请求的超时时间，单位为秒。
 ///
 /// 没有超时的话，目标站点不响应时插件会永远等不到结果，用户也看不到任何提示；

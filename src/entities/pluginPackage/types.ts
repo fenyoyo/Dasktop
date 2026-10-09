@@ -5,9 +5,9 @@
  * 1. **传输契约** —— 清单、扫描结果、通知载荷，与 Rust 侧结构逐字段对应；
  * 2. **运行时视图** —— 宿主面板消费的快照结构。
  *
- * 这里刻意没有「插件需要实现的接口」：插件界面是插件窗口里的普通网页，用标准 Web API
- * 编写，宿主不为它提供任何 JavaScript SDK。宿主与插件之间唯一的接口就是目录结构——
- * 一个 `plugin.json` 加若干页面文件。
+ * 这里没有「插件需要实现的 TypeScript 接口」：插件页面是普通网页，用标准 Web API 与
+ * 宿主注入的 `window.dasktop` 编写，不经过前端这套代码。宿主与插件之间的接口只有两样
+ * ——目录结构（`plugin.json` + 页面文件）与那份能力桥。
  */
 
 /* -------------------------------------------------------------------------- */
@@ -51,8 +51,9 @@ export interface PluginScanResult {
 }
 
 /**
- * 插件通知载荷。当前没有插件能触发它——插件页面不在 capabilities 白名单内，
- * 调不到 `notify_from_plugin`；保留整条链路是为了宿主注入的受控桥能直接复用。
+ * 插件通知载荷。
+ *
+ * 由插件经 `ui:notify` 能力触发，宿主广播给界面，插件面板据此展示通知流。
  */
 export interface PluginNotificationPayload {
   createdAt: number;
@@ -62,41 +63,17 @@ export interface PluginNotificationPayload {
 }
 
 /**
- * 插件发起的 HTTP 请求描述，与 Rust 侧 `PluginHttpRequest` 逐字段对应。
- *
- * 只有 `url` 是必填项，让「取一个接口」这类常见调用写成一行。
- */
-export interface PluginHttpRequest {
-  /** 请求体，按 UTF-8 文本承载。 */
-  body?: string;
-  /** 请求头，键值均为字符串。 */
-  headers?: Record<string, string>;
-  /** 请求方法，缺省为 GET。 */
-  method?: string;
-  /** 目标地址，仅接受 http / https 协议。 */
-  url: string;
-}
-
-/**
- * 插件 HTTP 请求结果。
- *
- * 非 2xx 不作为异常抛出：调用外部接口时 4xx 往往带有插件需要读取的说明正文，
- * 把它变成异常会迫使插件再发一次相同请求。
- */
-export interface PluginHttpResponse {
-  /** 响应体文本；非 UTF-8 内容已被有损转换。 */
-  body: string;
-  /** 响应头，同名头以逗号合并。 */
-  headers: Record<string, string>;
-  /** HTTP 状态码。 */
-  status: number;
-}
-
-/**
  * 宿主当前能够授予插件的权限。
  *
- * 字符串统一采用 `领域:动作` 格式。这份清单目前只用于「拒绝加载声明了未知权限的包」，
- * 也就是把「按更高版本宿主编写的插件」在加载期挡住，而不是等它运行到某个调用点才失败。
+ * 字符串统一采用 `领域:动作` 格式。这份清单有四处用途，改一处必须同时改其余几处：
+ *
+ * 1. 拒绝加载声明了未知权限的包（把「按更高版本宿主编写的插件」在加载期挡住）；
+ * 2. 插件窗口的能力桥按它决定挂载哪些方法（`services/plugin/bridge.rs`）；
+ * 3. Rust 侧每条能力命令执行前查插件清单（`services/plugin/mod.rs`）；
+ * 4. 插件窗口的 ACL 授权范围（`permissions/plugin-capabilities.toml`）。
+ *
+ * `scripts/verify-plugins.mjs` 会比对这里的集合与 Rust 侧的 `PLUGIN_PERMISSIONS`，
+ * 以及本文件权限与宿主命令的映射（见 `permissions.ts`）。
  */
 export const PLUGIN_PERMISSIONS = [
   "fs:read",

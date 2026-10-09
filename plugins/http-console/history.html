@@ -53,6 +53,13 @@
         word-break: break-all;
       }
 
+      .at {
+        margin-left: auto;
+        flex-shrink: 0;
+        color: #6b7280;
+        font-size: 12px;
+      }
+
       button {
         font: inherit;
         border: 1px solid #d7dae1;
@@ -78,7 +85,8 @@
         }
 
         .muted,
-        .status {
+        .status,
+        .at {
           color: #9aa3b2;
         }
 
@@ -108,59 +116,6 @@
 
     <button id="clear" type="button">清空历史</button>
 
-    <script>
-      /*
-       * 这是插件包里的第二个页面，跳转靠的就是一条普通的相对链接（见 index.html 顶部）。
-       * 宿主不参与页面间的导航——它只把 `index.html` 加载起来，之后走哪儿由插件自己决定。
-       *
-       * 两个页面共享同一个 localStorage（同一个 origin），所以 key 在这里也带着插件名前缀。
-       */
-      const HISTORY_KEY = "http-console:history";
-
-      const list = document.getElementById("list");
-      const history = readHistory();
-
-      if (history.length === 0) {
-        const empty = document.createElement("li");
-        empty.className = "muted";
-        empty.textContent = "还没有历史记录。";
-        list.appendChild(empty);
-      }
-
-      for (const entry of history) {
-        const item = document.createElement("li");
-
-        const status = document.createElement("span");
-        status.className = "status";
-        status.textContent = entry.status === 0 ? "失败" : String(entry.status);
-
-        const target = document.createElement("span");
-        target.className = "target";
-        target.textContent = entry.url;
-
-        item.append(status, target);
-        list.appendChild(item);
-      }
-
-      document.getElementById("clear").addEventListener("click", () => {
-        localStorage.removeItem(HISTORY_KEY);
-        list.innerHTML = "";
-
-        const empty = document.createElement("li");
-        empty.className = "muted";
-        empty.textContent = "还没有历史记录。";
-        list.appendChild(empty);
-      });
-
-      function readHistory() {
-        try {
-          const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      }
-    </script>
+    <script type="module" src="./history.js"></script>
   </body>
 </html>

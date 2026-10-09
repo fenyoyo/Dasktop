@@ -1,7 +1,7 @@
 {
   "id": "hello-dasktop",
   "name": "Hello Dasktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "entry": "index.html",
-  "permissions": []
+  "permissions": ["log:write", "ui:notify"]
 }

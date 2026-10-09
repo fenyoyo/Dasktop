@@ -14,10 +14,16 @@
 #
 # 补上本文件后，应用命令一律要经 capability 显式授予才可调用。授予范围见
 # `capabilities/default.json`：只有宿主自己的窗口（main / box_* / box_menu /
-# drag_preview）拿到，插件窗口刻意不在名单内，因此插件页面调不到任何一条。
+# drag_preview）拿到，插件窗口刻意不在名单内。
 #
-# 另注：这里定义的是「谁能调命令」，与插件清单里 `permissions` 那套「权限 → 能力」映射
-# 目前还没有接上。接上（受控桥）之后，插件窗口会按清单声明逐项授予，判定的落点仍在宿主侧。
+# 插件窗口的能力走另一份定义：`permissions/plugin-capabilities.toml` +
+# `capabilities/plugin.json`，那里只有五条能力命令，一条宿主命令都不含。两份权限刻意
+# 分开而不是把能力命令也放进来：插件窗口与宿主窗口的授权范围一旦共用一份定义，后续
+# 任何一次「给宿主加条命令」都会顺带把那条命令送给插件。
+#
+# 另注：这里定义的是「谁能调命令」。清单里 `permissions` 那套「插件声明了哪些能力」
+# 是另一层判定，落在服务层每条能力命令内部——ACL 的粒度是窗口，没法区分同样是插件
+# 窗口的 A 和 B。
 
 [[permission]]
 identifier = "allow-host-commands"
@@ -25,9 +31,10 @@ description = """
 允许宿主窗口调用应用自己注册的全部命令。
 
 只授予 main / box_* / box_menu / drag_preview 四个窗口；插件窗口（plugin_*）刻意不授予，
-插件页面因此调不到任何一条命令。新增命令时必须同时加进下面的清单——漏掉的话那条命令在
-宿主窗口里也会被拒，症状是「点了没反应 + 控制台报 command not allowed」。
-`pnpm verify:acl` 会比对 lib.rs 的 invoke_handler 与本清单，防止漏加。
+所需的五条能力命令在 allow-plugin-capabilities 里单独定义。新增命令时必须同时加进下面的
+清单——漏掉的话那条命令在宿主窗口里也会被拒，症状是「点了没反应 + 控制台报
+command not allowed」。`pnpm verify:acl` 会比对 lib.rs 的 invoke_handler 与本清单，
+防止漏加。
 """
 commands.allow = [
   # box_folder
@@ -56,15 +63,10 @@ commands.allow = [
   # native_drop
   "register_box_native_drop_target",
   "unregister_box_native_drop_target",
-  # plugin（宿主面板用的三条；下面五条能力命令是留给受控桥的，这里一并授予宿主窗口）
+  # plugin（宿主面板用的三条：列表、打开目录、开插件窗口）
   "list_plugins",
-  "notify_from_plugin",
   "open_plugin_root",
-  "plugin_asset_base_url",
-  "plugin_http_request",
-  "read_plugin_package_file",
-  "write_plugin_log",
-  "write_plugin_package_file",
+  "open_plugin_window",
   # app
   "is_autostart_enabled",
   "is_autostart_launch",

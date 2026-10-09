@@ -5,6 +5,10 @@
  * - 运行时快照与生命周期函数（宿主面板使用）；
  * - 插件窗口的打开与关闭；
  * - 权限映射表与协议类型。
+ *
+ * 这里**没有**插件的 JavaScript SDK：插件页面跑在自己的窗口里，调用宿主能力走的是
+ * 宿主注入的 `window.dasktop` 能力桥（见 `src-tauri/src/services/plugin/bridge.js`），
+ * 与前端这套代码没有任何 import 关系。
  */
 
 export {
@@ -15,12 +19,9 @@ export {
   reloadPluginRuntime,
 } from "./loader";
 
-export {
-  closePluginWindow,
-  openPluginWindow,
-  PLUGIN_WINDOW_LABEL_PREFIX,
-  pluginWindowLabel,
-} from "./window";
+export { closePluginWindow, PLUGIN_WINDOW_LABEL_PREFIX, pluginWindowLabel } from "./window";
+
+export { listPlugins, openPluginRoot, openPluginWindow } from "./api";
 
 export {
   PLUGIN_PERMISSION_DEFINITIONS,
@@ -33,8 +34,6 @@ export {
 export {
   PLUGIN_NOTIFICATION_LIMIT,
   PLUGIN_PERMISSIONS,
-  type PluginHttpRequest,
-  type PluginHttpResponse,
   type PluginNotificationPayload,
   type PluginPackageManifest,
   type PluginPackageRecord,

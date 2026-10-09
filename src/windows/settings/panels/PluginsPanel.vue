@@ -22,7 +22,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  openPage: [pluginId: string, pluginName: string, entry: string];
+  openPage: [pluginId: string];
   openRoot: [];
   reload: [];
 }>();
@@ -186,7 +186,7 @@ function describePermission(permission: PluginPermission | string): string {
               record.status === 'ready' ? '打开插件页面' : (record.error ?? '插件不可用')
             "
             type="button"
-            @click="emit('openPage', record.id, record.name, record.entry)"
+            @click="emit('openPage', record.id)"
           >
             <AppWindow :size="12" />
             打开

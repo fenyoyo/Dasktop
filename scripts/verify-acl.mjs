@@ -4,19 +4,26 @@
  *
  * 背景：Tauri 只在「应用定义了 ACL manifest」时，才对**应用自己的命令**做权限检查
  * （`tauri/src/webview/mod.rs`：`plugin_command.is_some() || has_app_acl_manifest || !is_local`）。
- * 此前 `src-tauri/permissions/` 不存在，加上插件窗口的 `http://plugin.localhost` 会被判定为
- * **本机来源**，三个条件一起不成立 → 这道检查被整条跳过，插件页面里的 JS 可以无门控地调用
- * 宿主任何一条命令（含 `delete_desktop_items` 这类破坏性操作）。
+ * `src-tauri/permissions/` 不存在时 `has_app_acl_manifest` 为 false，而插件窗口加载的
+ * `http://plugin.localhost` 又会被判定为**本机来源**，三个条件一起不成立 → 这道检查被整条
+ * 跳过，插件页面里的 JS 可以无门控地调用宿主任何一条命令（含 `delete_desktop_items`）。
  *
- * 现在 `permissions/host-commands.toml` 把门关上了。这套机制的失败模式很隐蔽，所以逐条静态校验：
+ * 现在门关上了，而且分成互不相交的两份：
  *
- * 1. **必须存在 app 级权限定义** —— 文件被删掉就等于退回「无门控」，而应用照常能跑，
- *    没有任何症状；
+ *   capabilities/default.json  →  allow-host-commands      →  main / box_* / box_menu / drag_preview
+ *   capabilities/plugin.json   →  allow-plugin-capabilities →  plugin_*
+ *
+ * 这套机制的失败模式全是**静默**的——应用照常启动、功能照常可用，只有隔离悄悄失效——
+ * 所以逐条静态校验：
+ *
+ * 1. **必须存在 app 级权限定义** —— 文件被删掉就等于退回「无门控」，没有任何症状；
  * 2. **每条已注册命令都必须被「已授予」的 app 权限覆盖** —— 漏一条，那条命令在宿主窗口里
  *    也会被拒，症状是「点了没反应 + 控制台 command not allowed」；
  * 3. **app 权限里不能出现未注册的命令名** —— 拼错或删命令后忘了清，会让鉴权看起来是好的；
- * 4. **任何 capability 都不得覆盖插件窗口** —— 这是整套隔离的地基。WebView 把自定义协议
- *    判定为本机来源，一旦有 capability 匹配 `plugin_*`，插件页面直接拿回全部能力。
+ * 4. **两份授权范围必须不相交** —— 一旦有 capability 同时覆盖宿主窗口与插件窗口，插件就
+ *    拿回了宿主命令。往 default.json 的窗口列表里加个 `plugin_*` 就会命中；
+ * 5. **插件窗口拿到的命令必须恰好等于能力映射表** —— 多一条是越权，少一条是能力桥调不通。
+ *    映射表从 `entities/pluginPackage/permissions.ts` 解析，与插件实际能调的集合同源。
  *
  * 零依赖，直接 `node scripts/verify-acl.mjs`。
  */
@@ -29,10 +36,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const permissionsDir = join(repoRoot, "src-tauri/permissions");
 const capabilitiesDir = join(repoRoot, "src-tauri/capabilities");
 const libSourcePath = join(repoRoot, "src-tauri/src/lib.rs");
+const permissionMapPath = join(repoRoot, "src/entities/pluginPackage/permissions.ts");
 
 /**
- * 插件窗口标签前缀。与 `src/entities/pluginPackage/window.ts` 的
- * `PLUGIN_WINDOW_LABEL_PREFIX` 必须一致。
+ * 插件窗口标签前缀。与 `src-tauri/src/domain/plugin/contract.rs` 的
+ * `PLUGIN_WINDOW_LABEL_PREFIX`、前端 `entities/pluginPackage/window.ts` 必须一致。
  */
 const PLUGIN_WINDOW_PREFIX = "plugin_";
 
@@ -44,7 +52,10 @@ const PLUGIN_WINDOW_PREFIX = "plugin_";
  * 默认即 `main`）。
  */
 const HOST_WINDOW_SAMPLES = ["main", "box_a1b2c3", "box_menu", "drag_preview"];
-const PLUGIN_WINDOW_SAMPLES = [`${PLUGIN_WINDOW_PREFIX}hello-dasktop`, `${PLUGIN_WINDOW_PREFIX}http-console`];
+const PLUGIN_WINDOW_SAMPLES = [
+  `${PLUGIN_WINDOW_PREFIX}hello-dasktop`,
+  `${PLUGIN_WINDOW_PREFIX}http-console`,
+];
 
 const failures = [];
 
@@ -56,14 +67,16 @@ async function main() {
   const registered = await readRegisteredCommands();
   const appPermissions = await readAppPermissions();
   const capabilities = await readCapabilities();
+  const capabilityCommands = await readCapabilityCommands();
 
   checkAppAclExists(appPermissions);
   const granted = resolveGrantedCommands(appPermissions, capabilities);
 
   checkCommandCoverage(registered, granted);
-  checkCapabilityWindowCoverage(capabilities);
+  checkHostWindowCoverage(capabilities);
+  checkPluginWindowScope(appPermissions, capabilities, capabilityCommands);
 
-  report(registered, appPermissions, capabilities, granted);
+  report(registered, appPermissions, capabilities, granted, capabilityCommands);
 }
 
 await main();
@@ -162,6 +175,27 @@ async function readCapabilities() {
   return capabilities;
 }
 
+/**
+ * 从权限映射表里取「插件能调的全部宿主命令」。
+ *
+ * 这份集合是判定「插件窗口被授权范围是否恰好」的基准：它与能力桥挂载的方法同源
+ * （都由 `permissions.ts` 表达），所以插件实际能调什么，这里的集合就该是什么。
+ */
+async function readCapabilityCommands() {
+  const source = await readFile(permissionMapPath, "utf8");
+  const commands = new Set();
+
+  for (const match of source.matchAll(/command:\s*"([^"]+)"/g)) {
+    commands.add(match[1]);
+  }
+
+  if (commands.size === 0) {
+    fail("未能从 entities/pluginPackage/permissions.ts 解析出能力命令映射，无法校验插件窗口的授权范围");
+  }
+
+  return commands;
+}
+
 /* -------------------------------------------------------------------------- */
 /* 校验                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -232,39 +266,104 @@ function checkCommandCoverage(registered, granted) {
 }
 
 /**
- * 任何 capability 都不得覆盖插件窗口。
+ * 宿主窗口必须被覆盖。
  */
-function checkCapabilityWindowCoverage(capabilities) {
-  const hostCovered = new Set();
+function checkHostWindowCoverage(capabilities) {
+  const covered = new Set();
 
   for (const capability of capabilities) {
     const patterns = [...capability.windows, ...capability.webviews];
 
-    for (const sample of PLUGIN_WINDOW_SAMPLES) {
-      if (patterns.some((pattern) => matchesWindowPattern(pattern, sample))) {
-        fail(
-          `capability「${capability.identifier}」的模式 ${patterns.join("、")} 覆盖了插件窗口「${sample}」。插件窗口一律不能进入白名单——WebView 把插件页面判定为本机来源，一旦授权就等于绕过全部能力门控`,
-        );
-      }
-    }
-
     for (const sample of HOST_WINDOW_SAMPLES) {
       if (patterns.some((pattern) => matchesWindowPattern(pattern, sample))) {
-        hostCovered.add(sample);
+        covered.add(sample);
       }
     }
   }
 
   for (const sample of HOST_WINDOW_SAMPLES) {
-    if (!hostCovered.has(sample)) {
+    if (!covered.has(sample)) {
       fail(`宿主窗口「${sample}」没有被任何 capability 覆盖，它调不动任何命令`);
     }
+  }
+}
+
+/**
+ * 插件窗口的授权范围必须恰好是能力命令集合。
+ *
+ * 三件事分开断言，是为了让失败原因一眼可读：「越权拿到宿主命令」「能力没给全」
+ * 「授权范围与能力映射表漂移」是三种不同的故障，报同一句话会让人从错误的方向查起。
+ */
+function checkPluginWindowScope(appPermissions, capabilities, capabilityCommands) {
+  const pluginCommands = resolveCommandsForSamples(appPermissions, capabilities, PLUGIN_WINDOW_SAMPLES);
+  const hostCommands = resolveCommandsForSamples(appPermissions, capabilities, HOST_WINDOW_SAMPLES);
+
+  if (pluginCommands.size === 0) {
+    fail("没有任何 capability 覆盖插件窗口（plugin_*），插件页面的能力桥每一次调用都会失败");
+    return;
+  }
+
+  // 越权：插件窗口拿到了宿主命令。
+  const escalated = [...pluginCommands].filter((command) => hostCommands.has(command)).sort();
+  if (escalated.length > 0) {
+    fail(
+      `插件窗口拿到了宿主窗口才有权调用的命令：${escalated.join("、")}。插件窗口与宿主窗口的授权范围必须分成两个互不相交的 capability——WebView 把插件页面判定为本机来源，共用一份授权就等于绕过全部能力门控`,
+    );
+  }
+
+  // 授权范围必须与能力映射表一致，多一条少一条都要报。
+  const missing = [...capabilityCommands].filter((command) => !pluginCommands.has(command)).sort();
+  const extra = [...pluginCommands].filter((command) => !capabilityCommands.has(command)).sort();
+
+  if (missing.length > 0) {
+    fail(
+      `这些能力命令没有授予插件窗口：${missing.join("、")}。插件调用它们会被 ACL 拒掉，而插件代码看起来完全正常`,
+    );
+  }
+
+  if (extra.length > 0) {
+    fail(
+      `插件窗口被多授予了这些命令：${extra.join("、")}。它们不在 entities/pluginPackage/permissions.ts 的能力映射里，插件无从调用，多授权只扩大攻击面`,
+    );
   }
 }
 
 /* -------------------------------------------------------------------------- */
 /* 工具                                                                        */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * 某个窗口样本集合实际被授予的全部 app 命令。
+ */
+function resolveCommandsForSamples(appPermissions, capabilities, samples) {
+  const commands = new Set();
+
+  for (const capability of capabilities) {
+    const patterns = [...capability.windows, ...capability.webviews];
+    const covers = samples.some((sample) =>
+      patterns.some((pattern) => matchesWindowPattern(pattern, sample)),
+    );
+
+    if (!covers) {
+      continue;
+    }
+
+    for (const permission of capability.permissions) {
+      if (permission.includes(":")) {
+        continue;
+      }
+
+      const definition = appPermissions.get(permission);
+
+      // 权限定义缺失已由 resolveGrantedCommands 报过，这里不重复报。
+      for (const command of definition?.allow ?? []) {
+        commands.add(command);
+      }
+    }
+  }
+
+  return commands;
+}
 
 /**
  * capability 的窗口模式支持 `*` 通配。
@@ -309,21 +408,22 @@ async function listDirectory(directory, suffix) {
 /**
  * 输出结果。
  */
-function report(registered, appPermissions, capabilities, granted) {
+function report(registered, appPermissions, capabilities, granted, capabilityCommands) {
   console.log("应用命令 ACL 验证\n");
 
   console.log(`  已注册命令        ${registered.size} 条`);
   console.log(`  app 权限定义      ${appPermissions.size} 条（${[...appPermissions.keys()].join("、") || "无"}）`);
   console.log(`  已授予命令        ${granted.size} 条`);
+  console.log(`  插件能力命令      ${capabilityCommands.size} 条`);
 
   for (const capability of capabilities) {
     const appPermissionsOf = capability.permissions.filter((item) => !item.includes(":"));
+    // windows 与 webviews 通常写同一组模式，去重后打印，免得一行里重复一遍。
+    const scopes = [...new Set([...capability.windows, ...capability.webviews])];
     console.log(
-      `  capability ${capability.identifier.padEnd(12)} 窗口 ${[...capability.windows, ...capability.webviews].join("、")} · app 权限 ${appPermissionsOf.join("、") || "无"}`,
+      `  capability ${capability.identifier.padEnd(12)} 窗口 ${scopes.join("、")} · app 权限 ${appPermissionsOf.join("、") || "无"}`,
     );
   }
-
-  console.log(`\n  插件窗口样本 ${PLUGIN_WINDOW_SAMPLES.join("、")} 均未被任何 capability 覆盖`);
 
   console.log("");
 

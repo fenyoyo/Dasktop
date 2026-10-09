@@ -7,8 +7,9 @@
 //! 使用 `CARGO_MANIFEST_DIR` 拼路径而不是多级 `..`，避免文件层级调整后相对路径静默
 //! 指向错误位置。
 //!
-//! 内嵌的是**多个**包：示例的作用是让作者照着改，而「单页插件」与「多页插件」是两种
-//! 不同的组织方式，只给一个包时另一个形态就没有可参考的写法。
+//! 内嵌的是**多个**包：示例的作用是让作者照着改，而「只用宿主能力的最小插件」与
+//! 「多页面 + 能力桥组合使用」是两种不同的写法，只给一个包时另一种形态就没有可参考的
+//! 样本。
 
 /// 示例插件包里的一个文件。
 ///
@@ -36,7 +37,8 @@ pub struct SamplePackage {
     /// 需要落盘的全部页面文件，**含入口页面本身**。
     ///
     /// 入口页面也列在这里而不是单列一个字段：包里有几个文件应当只有一个事实来源，
-    /// 否则「入口文件漏写进播种循环」这类错误不会有任何测试能发现。
+    /// 否则「入口文件漏写进播种循环」这类错误不会有任何测试能发现。脚本文件同样要列全，
+    /// 漏一个的表现是页面打开后按钮点了没反应——比 404 更难查。
     pub files: &'static [SampleFile],
 }
 
@@ -52,13 +54,22 @@ pub const SAMPLE_PACKAGES: &[SamplePackage] = &[
             env!("CARGO_MANIFEST_DIR"),
             "/../plugins/hello-dasktop/plugin.json"
         )),
-        files: &[SampleFile {
-            file_name: "index.html",
-            source: include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../plugins/hello-dasktop/index.html"
-            )),
-        }],
+        files: &[
+            SampleFile {
+                file_name: "index.html",
+                source: include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../plugins/hello-dasktop/index.html"
+                )),
+            },
+            SampleFile {
+                file_name: "index.js",
+                source: include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../plugins/hello-dasktop/index.js"
+                )),
+            },
+        ],
     },
     SamplePackage {
         package_id: "http-console",
@@ -76,10 +87,31 @@ pub const SAMPLE_PACKAGES: &[SamplePackage] = &[
                 )),
             },
             SampleFile {
+                file_name: "index.js",
+                source: include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../plugins/http-console/index.js"
+                )),
+            },
+            SampleFile {
                 file_name: "history.html",
                 source: include_str!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/../plugins/http-console/history.html"
+                )),
+            },
+            SampleFile {
+                file_name: "history.js",
+                source: include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../plugins/http-console/history.js"
+                )),
+            },
+            SampleFile {
+                file_name: "state.js",
+                source: include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../plugins/http-console/state.js"
                 )),
             },
         ],

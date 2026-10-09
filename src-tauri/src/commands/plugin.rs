@@ -1,14 +1,16 @@
 //! 插件命令层。
 //!
-//! 只做 IPC 参数接收与转发，命令本身不做权限判断。
+//! 只做 IPC 参数接收与转发。
 //!
-//! 需要留意：下面这几条能力命令（`read_plugin_package_file` / `write_plugin_package_file` /
-//! `write_plugin_log` / `notify_from_plugin` / `plugin_http_request`）当前**没有前端调用方**。
-//! 插件界面是插件窗口里的普通网页，而插件窗口刻意不在 capabilities 白名单内，因此它
-//! 无法 invoke 任何命令。保留这些能力是为了下一步的受控桥能直接复用——宿主会把一份
-//! 经权限校验的能力对象注入插件页面，权限判定的落点届时仍在宿主这一侧。
+//! 五条能力命令都带一个 `window: tauri::Window` 参数，这不是为了操作窗口，而是为了拿到
+//! **调用方身份**：插件窗口的标签是 `plugin_<id>`，由宿主建窗时写死，插件页面改不了。
+//! 命令参数里的 `plugin_id` 则完全由插件填写，只作为宿主窗口调用时的兜底。两者交给
+//! [`plugin::resolve_caller_plugin_id`] 收敛，结果是「插件只能以自己的身份调能力」。
+//!
+//! 权限判定不在这里，而在服务层：ACL 的粒度是窗口、清单的粒度是插件，命令层拿不到
+//! 「这个插件声明了什么」这个信息，只能读清单，那属于服务层的编排职责。
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Window};
 
 use crate::domain::plugin::{PluginHttpRequest, PluginHttpResponse, PluginScanResult};
 use crate::services::plugin;
@@ -21,23 +23,24 @@ pub fn list_plugins(app: AppHandle) -> Result<PluginScanResult, String> {
     plugin::scan_plugin_packages(&app)
 }
 
-/// 返回插件页面资源的 URL 前缀（形如 `http://plugin.localhost`）。
+/// 打开插件的界面窗口；窗口已存在时只把它调到前台。
 ///
-/// 平台差异必须由后端判断：WebView 在 Windows 上把自定义协议映射成
-/// `http://<scheme>.localhost`，其它平台才是 `<scheme>://localhost`。前端拿到前缀后
-/// 再拼 `/<插件id>/<相对路径>`。
+/// 建窗在 Rust 侧完成，因为能力桥只能随建窗注入（前端窗口选项不透出初始化脚本）。
 #[tauri::command]
-pub fn plugin_asset_base_url() -> String {
-    plugin::asset_base_url()
+pub fn open_plugin_window(app: AppHandle, plugin_id: String) -> Result<(), String> {
+    plugin::open_plugin_window(&app, &plugin_id)
 }
 
 /// 读取插件包内文本文件，对应 `fs:read` 能力。
 #[tauri::command]
 pub fn read_plugin_package_file(
     app: AppHandle,
+    window: Window,
     plugin_id: String,
     relative_path: String,
 ) -> Result<String, String> {
+    let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
+
     plugin::read_plugin_file(&app, &plugin_id, &relative_path)
 }
 
@@ -45,10 +48,13 @@ pub fn read_plugin_package_file(
 #[tauri::command]
 pub fn write_plugin_package_file(
     app: AppHandle,
+    window: Window,
     plugin_id: String,
     relative_path: String,
     contents: String,
 ) -> Result<(), String> {
+    let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
+
     plugin::write_plugin_file(&app, &plugin_id, &relative_path, &contents)
 }
 
@@ -56,10 +62,13 @@ pub fn write_plugin_package_file(
 #[tauri::command]
 pub fn write_plugin_log(
     app: AppHandle,
+    window: Window,
     plugin_id: String,
     level: String,
     message: String,
 ) -> Result<(), String> {
+    let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
+
     plugin::write_plugin_log(&app, &plugin_id, &level, &message)
 }
 
@@ -67,10 +76,13 @@ pub fn write_plugin_log(
 #[tauri::command]
 pub fn notify_from_plugin(
     app: AppHandle,
+    window: Window,
     plugin_id: String,
     title: String,
     message: String,
 ) -> Result<(), String> {
+    let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
+
     plugin::notify_from_plugin(&app, &plugin_id, &title, &message)
 }
 
@@ -80,9 +92,12 @@ pub fn notify_from_plugin(
 #[tauri::command]
 pub async fn plugin_http_request(
     app: AppHandle,
+    window: Window,
     plugin_id: String,
     request: PluginHttpRequest,
 ) -> Result<PluginHttpResponse, String> {
+    let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
+
     plugin::http_request(&app, &plugin_id, request).await
 }
 
