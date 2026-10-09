@@ -98,7 +98,22 @@ pub fn resolve_caller_plugin_id(window_label: &str, claimed_plugin_id: &str) -> 
 /// 建窗放在 Rust 侧而不是前端，原因是**能力桥只能在建窗时注入**：Tauri 的前端窗口选项
 /// 不透出初始化脚本，而 `window.dasktop` 必须在插件自己的脚本执行之前就绪。顺带把
 /// 「已存在就聚焦」的判断也收到一处，不会出现前后端各判一次还不一致。
-pub fn open_plugin_window(app: &AppHandle, plugin_id: &str) -> Result<(), String> {
+///
+/// # 为什么必须 `async`（别改回同步）
+///
+/// 同步命令是在 **主线程** 上就地执行的：WebView2 的 IPC 回调本身跑在 UI 线程，而 Tauri
+/// 注册的 handler 只是直接调用命令（`tauri-runtime-wry/src/lib.rs::create_ipc_handler`），
+/// 不换线程。而 `create_window` 判断到「当前就是主线程」后会**忽略事件循环代理、就地执行**
+/// 建窗（同文件 `send_user_message`）。于是同步命令里的 `.build()` 变成「在 WebView2 的
+/// `WebMessageReceived` 回调里同步创建第二个 WebView2 controller」——它要等消息循环转起来
+/// 才能完成初始化，而消息循环正卡在这个回调里出不去：**主线程死锁**。
+///
+/// 症状正是「宿主界面卡住 + 插件窗口一片空白」（原生窗口已建出来，WebView2 却没初始化完）。
+/// 写成 `async fn` 后，Tauri 的命令宏走 `InvokeResolver::respond_async` →
+/// `async_runtime::spawn`，落到 tokio 多线程运行时的 worker 线程上，`send_user_message`
+/// 走事件循环代理，建窗由主线程在事件循环里正常完成。Tauri 自己的 `plugin:window|create`
+/// 也是 `async` 的，同一个原因。
+pub async fn open_plugin_window(app: &AppHandle, plugin_id: &str) -> Result<(), String> {
     if !plugin_package::is_valid_plugin_id(plugin_id) {
         return Err(format!("非法插件 id：{plugin_id}"));
     }

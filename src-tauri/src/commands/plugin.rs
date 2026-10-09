@@ -26,9 +26,13 @@ pub fn list_plugins(app: AppHandle) -> Result<PluginScanResult, String> {
 /// 打开插件的界面窗口；窗口已存在时只把它调到前台。
 ///
 /// 建窗在 Rust 侧完成，因为能力桥只能随建窗注入（前端窗口选项不透出初始化脚本）。
+///
+/// **必须声明为 `async`**：同步命令在主线程上执行，而在主线程里建 WebView2 会死锁
+/// （完整推导见 [`plugin::open_plugin_window`]）。这里不是「顺手写成异步」，
+/// 改成同步会让插件窗口打不开、宿主界面一起卡死。
 #[tauri::command]
-pub fn open_plugin_window(app: AppHandle, plugin_id: String) -> Result<(), String> {
-    plugin::open_plugin_window(&app, &plugin_id)
+pub async fn open_plugin_window(app: AppHandle, plugin_id: String) -> Result<(), String> {
+    plugin::open_plugin_window(&app, &plugin_id).await
 }
 
 /// 读取插件包内文本文件，对应 `fs:read` 能力。

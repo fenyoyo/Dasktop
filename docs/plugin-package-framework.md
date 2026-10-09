@@ -368,7 +368,39 @@ pub fn resolve_caller_plugin_id(window_label: &str, claimed_plugin_id: &str) -> 
 - **已存在的窗口只聚焦、不重载**。用户在插件页面里可能已经翻到第二页，重载会把他弹回入口。
   先 `unminimize` 再 `show`：上次可能是被最小化关掉的，只 `show` 会留下一个不可见的窗口，
   用户点「打开」看起来毫无反应。
-- **建窗在 Rust 侧**，见「能力桥」。前端不再持有窗口创建细节。
+- **建窗在 Rust 侧**（`open_plugin_window`），前端不再持有窗口创建细节，见「能力桥」。
+- **建窗命令必须是 `async`**，理由见下。
+
+### 为什么建窗命令必须 `async`
+
+这是这套框架里第二个「写错了会静默失效」的地方，而且症状极具误导性：**插件窗口开出来是
+一片空白，同时整个宿主界面一起卡死**。窗口确实建出来了（原生窗口先落地），但 WebView2
+没初始化完，主线程被自己锁住。
+
+推导链（三处源码）：
+
+1. WebView2 的 IPC 回调跑在 **UI 线程**上，而 Tauri 注册的 handler 只是**直接调用**命令
+   （`tauri-runtime-wry/src/lib.rs::create_ipc_handler`，`Box::new(move |request| { handler(...) })`
+   ——没有任何线程切换）；
+2. 所以**同步命令就在主线程上就地执行**；
+3. 而 `create_window` 判断「当前线程 == 主线程」后，会**忽略事件循环代理、就地执行 `Message::CreateWindow`**
+   （同文件 `send_user_message`：`if current_thread().id() == context.main_thread_id { handle_user_message(...) }`）。
+
+于是同步命令里的 `.build()` 变成「在 WebView2 的 `WebMessageReceived` 回调里同步创建第二个
+WebView2 controller」——controller 的初始化要等消息循环转起来，而消息循环正卡在这个回调里
+出不去，**主线程死锁**。
+
+写成 `async fn` 之后：Tauri 的命令宏走 `InvokeResolver::respond_async` →
+`async_runtime::spawn`，落到 tokio **多线程**运行时的 worker 线程上；此时 `create_window`
+走事件循环代理，建窗由主线程在事件循环里正常完成。（`async_runtime` 的默认运行时是
+`TokioRuntime::new()`，即多线程调度器——若将来有人把它换成 `current_thread`，这个解法会失效。）
+
+旁证：Tauri 自己的 `plugin:window|create` 命令就是 `async fn`（`tauri/src/window/plugin.rs:67`），
+同一个原因。前端 `new WebviewWindow(...)`（Box 窗口走的路）之所以一直没问题，也是因为它最终
+调的是那条 async 命令。
+
+**别把它改回同步。** 改回去不会报错、不会编译失败，只会在运行时把宿主和插件窗口一起冻住。
+
 
 ## 七、权限与能力
 
@@ -569,6 +601,9 @@ pnpm build
 - **插件列表里没有某个目录** → 检查是否为 `.` / `_` 前缀（扫描时跳过），或清单 `id` 与目录名不一致。
 - **插件显示「不可用」** → 面板会直接给出原因：清单缺失、解析失败、入口页面不存在、未知权限。
 - **点「打开」没反应** → 打开设置窗的开发者工具看 `console.error`，窗口创建失败只记日志、不弹提示。
+- **窗口空白 + 宿主界面一起卡死** → 建窗命令被写成了同步 `fn`，主线程死锁。改回
+  `async fn`（见「为什么建窗命令必须 `async`」）。判据：宿主设置页也冻住 = 主线程被占，
+  纯空白则是另一回事（往下看资源 404）。
 - **插件窗口一片空白** → 在插件窗口里右键打开开发者工具（dev 版可用），看是不是资源 404
   （常见于手动同步示例包时漏了 `.js` 文件）。也可以直接在浏览器里访问同路径排查。
 - **`window.dasktop` 是 `undefined`** → 说明页面不是由宿主打开的，或这个包走了旧版建窗路径。
