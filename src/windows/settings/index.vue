@@ -5,12 +5,14 @@ import AboutPanel from "./panels/AboutPanel.vue";
 import AppearancePanel from "./panels/AppearancePanel.vue";
 import BoxesPanel from "./panels/BoxesPanel.vue";
 import FilePanel from "./panels/FilePanel.vue";
+import PluginsPanel from "./panels/PluginsPanel.vue";
 import SettingsHeader from "./components/SettingsHeader.vue";
 import SettingsSidebar from "./components/SettingsSidebar.vue";
 import WindowPanel from "./panels/WindowPanel.vue";
 import WorkspacePanel from "./panels/WorkspacePanel.vue";
 import { useSettingsActions } from "./composables/useSettingsActions";
 import { useSettingsBoxes } from "./composables/useSettingsBoxes";
+import { useSettingsPlugins } from "./composables/useSettingsPlugins";
 import { useSettingsStartup } from "./composables/useSettingsStartup";
 import { useSettingsWindow } from "./composables/useSettingsWindow";
 import { useWorkspaceStartup } from "./composables/useWorkspaceStartup";
@@ -29,6 +31,7 @@ const settingsActions = useSettingsActions(desktopStore);
 const settingsBoxes = useSettingsBoxes(desktopStore);
 const settingsWindow = useSettingsWindow(desktopStore, settingsActions.syncAutostartEnabled);
 const workspaceStartup = useWorkspaceStartup();
+const settingsPlugins = useSettingsPlugins();
 const settingsStartup = useSettingsStartup(
   desktopStore,
   settingsActions.syncAutostartEnabled,
@@ -46,6 +49,9 @@ const settingsStartup = useSettingsStartup(
  *
  * 工作区启动编排必须早于 Box 恢复：它以最快的速度判断本次是否由
  * 工作区快捷方式启动，从而决定设置窗在 Box 恢复后是否收起。
+ *
+ * 插件加载放在最后且不 await：插件是第三方代码，激活耗时不可控，
+ * 更不能因为某个插件卡住就让 Box 恢复与设置窗显示一起等下去。
  */
 onMounted(async () => {
   await settingsWindow.bindFocusSync();
@@ -54,6 +60,7 @@ onMounted(async () => {
     activeSection.value = "workspace";
   }
   await settingsStartup.initializeSettingsStartup();
+  void settingsPlugins.initializePlugins();
 });
 
 /**
@@ -173,6 +180,13 @@ function changeActiveSection(section: SettingsSection): void {
                   @box-theme-change="desktopStore.updateBoxTheme"
                   @box-visual-setting-change="desktopStore.updateNumberSetting"
                   @settings-theme-change="desktopStore.updateSettingsTheme"
+                />
+                <PluginsPanel
+                  v-else-if="activeSection === 'plugins'"
+                  :panel-width="SETTINGS_PANEL_WIDTH.default"
+                  :runtime="settingsPlugins.runtime.value"
+                  @open-root="settingsPlugins.openPluginsRoot"
+                  @reload="settingsPlugins.reloadPlugins"
                 />
                 <AboutPanel
                   v-else-if="activeSection === 'about'"
