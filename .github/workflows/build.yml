@@ -1,0 +1,85 @@
+# GitHub Actions 自动打包工作流
+#
+# 触发规则：
+#   - 推送到 main / dev 分支：执行完整打包（前端构建 + Tauri 打包），
+#     并把 NSIS / MSI 安装包作为 Workflow Artifact 上传，供手动下载验证
+#   - 推送 v* 标签（如 v0.2.6）：除打包外，自动创建 GitHub Release 草稿
+#     并附上安装包，发布时在 Releases 页确认即可
+#   - 支持在 Actions 页面手动触发（workflow_dispatch）
+#
+# 说明：本项目为 Windows 桌面应用，仅在 windows-latest 上打包。
+
+name: Build Dasktop
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: 打包 Windows 安装包
+    runs-on: windows-latest
+    steps:
+      # 拉取代码
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # package.json 的 packageManager 字段已声明 pnpm@11.5.3，action 会自动读取
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+
+      # Tauri 前端构建要求 Node >= 20.19，使用 Node 22 LTS
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # 安装 Rust 稳定工具链
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      # 缓存 Cargo 编译产物，避免每次推送都全量重编（可节省大量时间）
+      - name: 缓存 Rust 编译产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # 依赖必须按 lockfile 精确安装，保证构建可复现
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      # 插件入口以字符串交给 Worker，vue-tsc/vite 对 plugins/ 无覆盖，
+      # 打包前先校验插件包完整性（与本地发布流程保持一致）
+      - name: 校验插件包
+        run: pnpm verify:plugins
+
+      # tauri-action 内部执行 tauri build（含 beforeBuildCommand: pnpm build）。
+      # 仅当触发源是 v* 标签时才创建 Release；普通分支推送只构建不发布。
+      - name: Tauri 打包
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: 'Dasktop ${{ github.ref_name }}'
+          releaseBody: '请在下方 Assets 下载对应安装包。'
+          releaseDraft: true
+          prerelease: false
+
+      # 分支推送场景：把安装包上传为 Artifact，在 Actions 运行详情页下载
+      - name: 上传安装包 Artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dasktop-windows-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 14
