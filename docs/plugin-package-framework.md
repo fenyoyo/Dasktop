@@ -34,24 +34,49 @@ Dasktop 的可插拔包框架：插件以**磁盘上的插件包**形式存在�
 │  └────────────────────────────┘   └─────────────────────────────┘  │
 └───────────┬────────────────────────────────────┬───────────────────┘
             │ plugin 协议                         │ invoke
-            │ http://plugin.localhost/<id>/…      │ （仅白名单内窗口）
+            │ http://plugin.localhost/<id>/…      │ （仅被 capability 覆盖的窗口）
             ▼                                    ▼
 ┌───────────────────────────────┐   ┌───────────────────────────────┐
 │   插件窗口（每个插件一个）      │   │      设置窗口 / Box 窗口       │
-│   label: plugin_<id>          │   │  在 capabilities 白名单内      │
+│   label: plugin_<id>          │   │  被 capability 覆盖            │
 │   加载插件作者写的网页          │   │  插件列表、打开入口            │
-│   ✗ 不在 capabilities 白名单   │   └───────────────────────────────┘
-│   ✗ 调不动任何 Tauri 命令      │
+│   ✗ 不在任何 capability 内     │   └───────────────────────────────┘
+│   ✗ 应用命令一律被 ACL 拒掉    │
 └───────────────────────────────┘
 ```
 
-一句话概括隔离模型：**插件窗口不在 capabilities 白名单里**。
+一句话概括隔离模型：**应用命令必须经 capability 授予才可调用，而插件窗口不被任何
+capability 覆盖。**
 
-这一点必须理解到位，否则很容易做出错误的安全判断。Tauri 2 的 `is_local_url` 把
-`http://plugin.localhost` 判定为**本机来源**（Windows / Android 上自定义协议就映射成
-`http://<scheme>.localhost`）。也就是说，只要把插件窗口加进 `capabilities/default.json`
-的 `windows`，插件页面立刻就能 `invoke` 那些能力命令、绕过任何前端门控。当前的配置是
-一条都不给：插件页面拿不到 Tauri 注入的调用入口，就是一个彻底的普通网页。
+这个模型里有一处反直觉、并且**曾经真的踩进去过**的地方，值得单独说清。
+
+Tauri 2 的 `is_local_url` 把 `http://plugin.localhost` 判定为**本机来源**（Windows / Android
+上自定义协议就映射成 `http://<scheme>.localhost`）。而 Tauri 对**应用自己的命令**要不要做权限
+检查，判据是这个（`tauri/src/webview/mod.rs`）：
+
+```rust
+if (plugin_command.is_some() || has_app_acl_manifest || !is_local) && … { /* 拒绝 */ }
+```
+
+插件窗口是「本机来源」，命令名又都不带 `plugin:` 前缀（我们的命令叫 `plugin_http_request`，
+是下划线不是冒号），于是它**只可能命中 `has_app_acl_manifest`**。而这项又取决于
+`src-tauri/permissions/` 下有没有 app 级权限定义——**该目录不存在时，这道检查会被整条跳过**，
+插件页面里任意一段 JS 只要调 `window.__TAURI_INTERNALS__.invoke("delete_desktop_items", {…})`
+就会直接执行。capabilities 白名单管的是 `core:` 这类**插件**命令，管不住应用命令，
+所以那时候的「不给白名单」其实什么都没挡住。
+
+因此这套框架有两条**缺一不可**的防线：
+
+1. `src-tauri/permissions/host-commands.toml` —— app 级权限定义，它的存在让应用命令进入鉴权；
+2. `capabilities/default.json` 只覆盖 `main` / `box_*` / `box_menu` / `drag_preview`
+   —— 插件窗口拿不到任何授予。
+
+少了第一条，第二条形同虚设；少了第二条，插件窗口直接拿回全部能力。`pnpm verify:acl` 把这两条
+都盯住（详见「开发与调试」）。
+
+还有一处别想当然：`__TAURI_INTERNALS__` 的注入脚本是加在**每个** Tauri 创建的 webview 上的
+（`manager/webview.rs`），插件页面**拿得到**调用入口。拦住它的是上面这套 ACL，
+不是「拿不到入口」——写注释时按后者理解，会得出「只要不注入就没有风险」这种错误结论。
 
 ## 二、职责划分
 
@@ -66,6 +91,8 @@ Dasktop 的可插拔包框架：插件以**磁盘上的插件包**形式存在�
 | `infrastructure/filesystem/plugin_log.rs` | 按插件分文件的日志追加与容量控制 |
 | `infrastructure/http/` | HTTP 客户端：URL/方法校验、体积上限、响应头归一（对应 `net:request` 能力） |
 | `domain/plugin/` | 契约常量、清单与扫描结果类型、网络请求/响应类型、内嵌示例包声明 |
+| `permissions/host-commands.toml` | **app 级 ACL 定义**：把应用命令纳入鉴权，并（经 capability）授予宿主窗口。删掉它等于退回无门控，见「整体架构」 |
+| `capabilities/default.json` | 授予宿主窗口代码能力；插件窗口刻意不在其中 |
 
 ### 前端侧
 
@@ -190,7 +217,17 @@ URL 必须是**多段**形式。前端拼装时逐段 `encodeURIComponent` 而�
 
 ## 六、权限与能力
 
-权限映射表（`permissions.ts`）描述的是「权限 → 宿主命令」：
+这里有**两个不同的东西**共用「权限」这个词，混着看会得出错误结论，先分开。
+
+### A. ACL 门控：哪个窗口能调命令
+
+由 `src-tauri/permissions/host-commands.toml`（定义）+ `capabilities/default.json`（授予）
+组成，是运行期真正生效的那一层。结论一句话：**宿主窗口能调全部应用命令，插件窗口一条都调不了。**
+注意它的粒度是**窗口**而不是插件——它不是「插件被允许调什么」，而是「窗口被允许调什么」。
+
+### B. 权限映射表：插件清单声明的能力
+
+`permissions.ts` 描述的是「权限 → 宿主命令」：
 
 | 权限 | 对应宿主命令 | 说明 |
 |---|---|---|
@@ -200,15 +237,21 @@ URL 必须是**多段**形式。前端拼装时逐段 `encodeURIComponent` 而�
 | `net:request` | `plugin_http_request` | 发起 HTTP(S) 请求，**不受同源策略约束** |
 | `ui:notify` | `notify_from_plugin` | 向宿主发送通知 |
 
-**当前状态：这些命令没有调用方。** 插件窗口不在 capabilities 白名单内，页面调不动它们，
-因此清单里声明权限目前只影响「未知权限预检」这一件事。
+**当前状态：这张表还没有接线。** 这些命令没有调用方，清单里声明 `permissions` 目前只影响
+「未知权限预检」这一件事（声明了宿主不认识的权限则该包被标记为不可用）。保留整套能力实现是
+有意为之——受控桥落地时它才真正生效。
 
-保留整套能力实现是有意为之：下一步会给插件窗口注入一份**受控桥**（宿主生成的
-`window.dasktop` 之类的对象），把页面里的能力请求按清单权限转发到对应命令。届时：
+### 受控桥（尚未落地）需要先定的两件事
 
-- 权限判定的落点必须在**宿主侧**。注入到页面的对象只是便利层，插件可以换掉它、或直接构造
-  一次调用，所以真正的判据只能是「宿主收到的请求 + 宿主自己保存的授权集合」；
-- 插件窗口仍然**不**进 capabilities 白名单，能力全部经由这一个窄口子进出。
+下一步是让插件窗口能调一部分能力，而**可靠的落点只有 ACL**：
+
+- 插件页面总能绕过任何注入进去的便利对象（`window.dasktop` 之类），直接构造一次
+  `window.__TAURI_INTERNALS__.invoke(…)`。所以「注入的桥自己做权限检查」不成立，
+  真正的判据只能是 ACL，或宿主收到的请求本身；
+- 清单里的 `permissions` 是**按插件**声明的，而 capability 是**按窗口**静态授予的，
+  两者粒度对不上。接起来要么走上 Tauri 的 `dynamic-acl`（按清单为窗口动态加 capability），
+  要么把落点收进命令内部（每条命令自己确认调用方是哪个插件、授权集合是什么）。这是动工前
+  要先拍板的事。
 
 `net:request` 与浏览器 `fetch` 的差别正好说明了为什么值得保留这条路径：`fetch` 受同源策略
 约束，而宿主代发的请求由 Rust 进程发出，没有 CORS 限制。
@@ -217,13 +260,17 @@ URL 必须是**多段**形式。前端拼装时逐段 `encodeURIComponent` 而�
 
 | 边界 | 防护点 | 实现位置 |
 |---|---|---|
-| 命令调用 | 插件窗口不在 capabilities 白名单内，页面调不动任何 Tauri 命令 | `capabilities/default.json` |
+| 命令调用 | 应用命令经 app ACL 鉴权；插件窗口不被任何 capability 覆盖 | `permissions/host-commands.toml` + `capabilities/default.json` |
 | 文件系统 | 协议处理器复用 `fs` 的路径沙箱，页面资源不能逃出插件包目录 | `plugin_package::resolve_sandboxed_path` |
 | 加载期预检 | 清单出现未知权限直接标记为不可用 | `loader::describePackage` |
 | 入口缺失 | 扫描阶段就校验入口页面存在，不留到打开窗口时才 404 | `plugin_package::load_package_record` |
 | 网络滥用 | 只允许 http/https；20 秒超时；响应体 2 MB 上限 | `infrastructure/http/` |
 | 磁盘占用 | 单插件日志文件超过 512 KB 自动重置 | `plugin_log::reset_if_oversized` |
 | 体积滥用 | 页面资源 8 MB、包内数据文件 4 MB 上限 | `domain/plugin/contract.rs` |
+
+第一行是这套框架唯一的**硬**边界，其余几行属于「用起来更安全」的约束。它由两条配置共同成立，
+动其中任何一条都要重新推一遍（`pnpm verify:acl` 挡住最容易犯的两种错：漏加命令、以及有人
+图省事把 `plugin_*` 写进 capability 的窗口模式）。
 
 路径沙箱做两道独立校验，两道都需要，不能互相替代：
 
@@ -233,17 +280,20 @@ URL 必须是**多段**形式。前端拼装时逐段 `encodeURIComponent` 而�
 
 ## 八、能力扩展方式
 
-给插件增加新能力的完整落点：
+给插件增加新能力（或给宿主加一条命令）的完整落点：
 
 1. **Rust 命令**：新增 `#[tauri::command]`，在 `lib.rs` 的 `invoke_handler` 注册；
    需要新依赖时同步 `Cargo.toml` 与 `Cargo.lock`。
-2. **`services/plugin/`**：把命令包装成面向插件 id 的用例（校验 id、记日志、编排副作用）。
-3. **`entities/pluginPackage/api.ts`**：加 `invoke` 封装。
-4. **`entities/pluginPackage/types.ts`**：扩 `PLUGIN_PERMISSIONS` 与相关传输类型。
-5. **`entities/pluginPackage/permissions.ts`**：加一条 `{ command, permission, summary }` 映射，
+2. **`permissions/host-commands.toml`**：把命令名加进 `allow-host-commands` 的
+   `commands.allow`。**漏了这一步，命令在宿主窗口里也会被拒**，症状是「点了没反应 +
+   控制台报 command not allowed」，且只在运行时暴露——`pnpm verify:acl` 专为这一步存在。
+3. **`services/plugin/`**：把命令包装成面向插件 id 的用例（校验 id、记日志、编排副作用）。
+4. **`entities/pluginPackage/api.ts`**：加 `invoke` 封装。
+5. **`entities/pluginPackage/types.ts`**：扩 `PLUGIN_PERMISSIONS` 与相关传输类型。
+6. **`entities/pluginPackage/permissions.ts`**：加一条 `{ command, permission, summary }` 映射，
    面板上的权限标签读它（`scripts/verify-plugins.mjs` 也实时解析 `PLUGIN_PERMISSIONS` 校验
    示例插件，所以它无需同步）。
-6. **受控桥**（尚未落地）：在注入脚本里把该权限的能力暴露给页面，并确保宿主侧校验。
+7. **受控桥**（尚未落地）：让插件窗口真正调得到这条能力，落点与前置决策见「权限与能力」。
 
 已经走过的 `net:request` 留下一个值得记的坑：`reqwest` 0.13 的**默认特性会拉入
 `aws-lc-sys`**，它在 Windows 上需要 cmake/nasm 做原生编译（本机两者都没有）。
@@ -252,13 +302,19 @@ URL 必须是**多段**形式。前端拼装时逐段 `encodeURIComponent` 而�
 ## 九、当前框架的局限
 
 - **插件页面是可信代码**。它跑在 WebView 里，有完整的 DOM、`window` 与网络访问能力，
-  宿主对它没有任何执行期限制。框架守的是「插件碰不到宿主能力」，不是「插件做不了坏事」。
-  要更强的隔离只能上独立进程或独立 WebView 分区，属于后续演进方向。
+  宿主对页面内部不做任何执行期限制。框架守的是「插件碰不到宿主能力」——这一条现在靠 ACL
+  真正落实了——而不是「插件做不了坏事」。要更强的隔离只能上独立进程或独立 WebView 分区。
 - **所有插件共享一个 origin**。`localStorage` 等存储是公用的，只能靠命名约定避免冲突。
   自定义协议的寻址形式由 WebView 决定（`<scheme>.localhost`），做不出「每插件一个 origin」。
 - **页面资源没有 CSP**。`tauri.conf.json` 当前是 `"csp": null`，插件想加载什么外部资源都行。
   这是「插件即网页」的自然语义，但也意味着给插件窗口单独设 CSP 是个需要单独设计的事。
-- **能力目前用不上**。见「权限与能力」——要等受控桥落地，`permissions` 才真正生效。
+- **清单里的 `permissions` 目前不生效**。ACL 那一层已经生效（插件窗口确实一条命令都调不了），
+  但「按清单声明逐项放开」要等受控桥；两者是两回事，见「权限与能力」。
+- **ACL 的粒度是窗口而不是插件**。所有插件窗口共享同一条策略，做不出「插件 A 能调 X、
+  插件 B 不能」。要那个粒度只能走 `dynamic-acl`，或把判定收进命令内部。
+- **删掉 `src-tauri/permissions/` 会静默退回无门控**。应用照常启动、功能照常可用，插件页面
+  却重新拿回全部能力，全程没有任何症状。这是这套设计最需要留意的脆弱点，也是
+  `pnpm verify:acl` 第一条断言要挡的事。
 - **无域名白名单**：`net:request` 只做权限门控，拿到权限的插件可以请求任意主机。
 - **文本文件沙箱比文档更严格**：`fs:read` / `fs:write` 被限制在**插件包自身目录**内，
   而不是整个插件根目录 —— 允许插件 A 改写插件 B 的源码会让「重新加载」变成提权入口。
@@ -275,6 +331,9 @@ cargo test --lib --manifest-path src-tauri/Cargo.toml
 # 插件包契约校验
 pnpm verify:plugins
 
+# 应用命令 ACL 校验
+pnpm verify:acl
+
 # 前端类型检查与构建
 pnpm build
 ```
@@ -290,6 +349,18 @@ pnpm build
   而不是插件目录，包内引用必须写成相对路径
 ```
 
+`pnpm verify:acl` 同理值得单独说明，它盯的是一个**会静默失效**的机制：应用命令的鉴权只在
+`src-tauri/permissions/` 有定义时才生效，而这个目录被删掉、或某条新命令忘了加进去，应用都能
+正常启动——前者让插件页面重获全部能力（安全问题），后者让那条命令在宿主窗口里失效（功能问题），
+两者都不会在构建期报错。`scripts/verify-acl.mjs` 逐条比对 `lib.rs` 的 `invoke_handler`、
+`permissions/*.toml` 与 `capabilities/*.json`，并断言没有任何 capability 覆盖插件窗口：
+
+```
+发现 2 个问题：
+  - 命令「list_plugins」已注册但没有被任何 capability 授予：宿主窗口调用它会被拒。把它加进 src-tauri/permissions/host-commands.toml
+  - app 权限里列了命令「list_plugns」，但它不在 lib.rs 的 invoke_handler 里（拼写错误，或删命令后忘了同步权限文件）
+```
+
 调试时的几个落点：
 
 - **插件列表里没有某个目录** → 检查是否为 `.` / `_` 前缀（扫描时跳过），或清单 `id` 与目录名不一致。
@@ -297,6 +368,10 @@ pnpm build
 - **点「打开」没反应** → 打开设置窗的开发者工具看 `console.error`，窗口创建失败只记日志、不弹提示。
 - **插件窗口一片空白** → 在插件窗口里右键打开开发者工具（dev 版可用），看是不是资源 404。
   也可以直接在浏览器里访问同路径排查。
+- **想确认插件窗口真的调不动宿主命令** → 在插件窗口的开发者工具里执行
+  `await window.__TAURI_INTERNALS__.invoke("list_plugins")`，报 `command not allowed` 才是
+  预期结果。若真的返回了插件列表，说明 ACL 没生效：先看 `src-tauri/permissions/` 还在不在，
+  再看 `capabilities/default.json` 的窗口列表有没有被人写进 `plugin_*`。
 - **改了页面但窗口里还是旧的** → 关掉插件窗口重开。响应带 `no-store`，所以不存在缓存问题；
   窗口本身不会感知磁盘变化。
 - **想查看插件输出** → 插件日志位于 `%APPDATA%\cn.syand.dasktop\plugin-logs\<plugin-id>.log`。
