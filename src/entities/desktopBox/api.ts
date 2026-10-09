@@ -93,7 +93,7 @@ export function handleBoxDraggedPathsToDesktop(
 }
 
 /**
- * 把 Box 窗口固定为「置顶 + 免疫 Win+D」，保证显示桌面时 Box 不被隐藏。
+ * 把 Box 窗口落到「桌面层」：常驻桌面、不遮挡其它窗口，且在 Win+D「显示桌面」时保持可见。
  * 底层失败时返回错误，由调用方降级为普通顶层窗口。
  */
 export function glueBoxWindowToDesktop(windowLabel: string): Promise<void> {

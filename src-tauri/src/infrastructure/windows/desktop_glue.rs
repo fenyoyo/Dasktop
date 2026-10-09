@@ -1,80 +1,107 @@
-//! Box 窗口的「桌面置顶固定」（Pin Mode）：让 Box 保持置顶并免受 Win+D「显示桌面」影响。
+//! Box 窗口的「桌面层」（On Desktop）Z 序管理。
 //!
-//! # 背景
+//! # 目标
 //!
-//! Box 的产品语义是「常驻桌面的小组件」（悬浮在桌面图标之上、可交互）。
-//! Win+D「显示桌面」会把所有普通 Z 序窗口隐藏，Box 也跟着消失。
+//! Box 的产品语义是「常驻桌面的小组件」，需要同时满足两个约束：
 //!
-//! # 为什么不用 WorkerW 吸附（Wallpaper Mode）
+//! 1. **不遮挡任何窗口**：Box 不能浮在浏览器 / 编辑器 / 设置窗之上；
+//! 2. **显示桌面时保留**：Win+D、任务栏「显示桌面」之后 Box 仍在桌面上可见可交互。
 //!
-//! 之前尝试把 Box `SetParent` 到 WorkerW 桌面层（Wallpaper Engine 同款技术），
-//! 实测发现**两个致命问题**：
+//! 这两个约束本质互斥——任何「永远在最上层」的实现都必然遮挡其它窗口。
 //!
-//! 1. **收不到输入**：WorkerW 窗口在 Z 序上位于桌面图标层（`SHELLDLL_DefView`）
-//!   之下，鼠标命中测试根本到不了它，导致 Box「无法点击、无法拖放」。这是
-//!   `tauri-plugin-wallpaper` 官方文档明确指出的限制——壁纸窗口默认收不到输入，
-//!   要让它们交互需要额外的 raw-input 转发（`RIDEV_INPUTSINK` 全局原始输入钩子），
-//!   复杂度高且 Chromium 的输入管道对合成消息不友好。
-//! 2. **黑角/样式失真**：`WS_EX_LAYERED` 子窗口在 WorkerW 下 alpha 合成异常。
+//! # 走错的路线（记录以免重蹈）
 //!
-//! # 本方案：Pin Mode（置顶 + 拦截 WM_WINDOWPOSCHANGING）
+//! - **Wallpaper Mode（`SetParent` 到 `WorkerW` / `Progman`）**：`WorkerW` 在 Z 序上
+//!   位于桌面图标层 `SHELLDLL_DefView` 之下，鼠标命中测试根本到不了它，Box 无法点击、
+//!   无法接收拖放；`WS_EX_LAYERED` 子窗口的 alpha 合成同时会异常。Rainmeter 在 2010 年
+//!   （commit `b769a7a3`）也正是**移除**了这条路线，改为纯 Z 序管理。
+//! - **Pin Mode（常驻 `HWND_TOPMOST`）**：置顶窗口天然免疫 Win+D，但代价是永远压在
+//!   所有窗口之上，直接违反约束 1。只能靠「让设置窗也进置顶带并排在 Box 之前」打补丁，
+//!   对其它应用一概无解。
 //!
-//! 正确做法（`tauri-plugin-wallpaper` 的 Pin Mode 同款）是**保持 Box 为普通顶层
-//! 窗口，但置顶**：
+//! # 采用的模型：Rainmeter 的 `AlwaysOnTop = -2`（On Desktop）
 //!
-//! 1. `SetWindowPos(HWND_TOPMOST)` 把 Box 置顶。置顶窗口**天然不被 Win+D 隐藏**
-//!    （Win+D 只作用于普通 Z 序窗口），这是核心机制；
-//! 2. 子类化窗口过程，拦截 `WM_WINDOWPOSCHANGING`：当系统尝试把窗口移到
-//!   `(-32000, -32000)`（Win+D 的哨兵坐标）时，设置 `SWP_NOMOVE | SWP_NOSIZE`
-//!   阻止移动，并强制 `hwndInsertAfter = HWND_TOPMOST`，兜底某些边缘场景。
+//! 参考 `E:\github\rainmeter`（`Library/System.cpp` 的 `System::CheckDesktopState` /
+//! `PrepareHelperWindow`，`Library/Skin.cpp` 的 `Skin::ChangeZPos`），Rainmeter 用
+//! 两层状态实现同一语义：
 //!
-//! 这样 Box 既是**普通顶层窗口**（WebView2 输入链完全正常，点击/拖放/激活都
-//! 正常），又能**在 Win+D 时保持可见**。
+//! | 状态 | Box 的 Z 序位置 | 效果 |
+//! |---|---|---|
+//! | 普通 | `HWND_BOTTOM` | 在所有应用窗口之下、桌面图标之上 → 永不遮挡 |
+//! | 显示桌面 | 置顶带**最底部** | 高于被提升的桌面，低于任务栏等真置顶窗口 → 保留可见 |
 //!
-//! # 与 Win+M 的关系
+//! 关键在于**桌面宿主窗口的 Z 序位置会变化**：按 Win+D 时 Explorer 把桌面图标宿主
+//! （Win11 24H2+ 是 `Progman`；更早版本是承载 `SHELLDLL_DefView` 的 `WorkerW`）
+//! 从 Z 序最底层**提升到非置顶带的顶端**。因此 Box 只放在 `HWND_BOTTOM` 是不够的——
+//! 桌面一旦被提升，Box 就落到桌面之下被「吞掉」；必须同时把它搬进置顶带。
 //!
-//! Win+M（Minimize All）向窗口发 `WM_SYSCOMMAND + SC_MINIMIZE`。本实现同样拦截
-//! 该消息（返回 0 不转发），使 Box 在 Win+M 时也保持可见——Box 是「常驻桌面」
-//! 语义，用户按 Win+M 清桌面时它也应留存。
+//! 检测「桌面是否被提升」用的是纯 Z 序几何判据（见 `desktop_is_frontmost`），
+//! 不依赖窗口焦点，所以点击 Box、点击桌面图标都不会误判。
 //!
-//! 注意：拦截 SC_MINIMIZE 会让 Box **无法通过任何方式最小化**（包括点任务栏
-//! 图标、点窗口自带的最小化按钮）。后续若要做「用户可选」，可在此处按配置
-//! 决定是否放行 SC_MINIMIZE。
+//! 子类化的窗口过程（见 `box_wndproc`）负责两件事：
 //!
-//! # 边界与降级
+//! - `WM_WINDOWPOSCHANGING` 强制 `SWP_NOZORDER`：Box 不参与 Z 序竞争，点击 / 激活
+//!   都不会把它抬到其它窗口之上——这是 Rainmeter 文档里「On Desktop 不能被带到前台」
+//!   的实现方式；顺带拦截 Win+D 的哨兵移动 `(-32000, -32000)` 作为兜底；
+//! - `WM_SYSCOMMAND + SC_MINIMIZE` 直接吞掉：Win+M「全部最小化」时 Box 保持可见。
+//!   代价是 Box 无法通过任何方式最小化。
 //!
-//! - 子类化窗口过程必须保存原过程指针，并在窗口销毁/取消固定时恢复；
-//! - 置顶是纯窗口属性操作，无 UIPI 限制（不跨进程），以管理员运行也安全。
+//! 本模块**自己**的排层调用必须带 `SWP_NOSENDCHANGING`，否则会被上面那条拦截逻辑挡回来。
 
 use std::collections::HashMap;
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, DefWindowProcW, IsWindow, SetWindowLongPtrW, SetWindowPos, GWLP_WNDPROC,
-    HWND_NOTOPMOST, HWND_TOPMOST, SC_MINIMIZE, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, WINDOWPOS, WM_SYSCOMMAND, WM_WINDOWPOSCHANGING, WNDPROC,
+    CallWindowProcW, DefWindowProcW, FindWindowExW, GetShellWindow, GetTopWindow, GetWindow,
+    GetWindowLongPtrW, IsWindow, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, GWLP_WNDPROC,
+    GWL_EXSTYLE, GW_HWNDNEXT, GW_HWNDPREV, HWND_BOTTOM, HWND_TOPMOST, SC_MINIMIZE,
+    SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSENDCHANGING,
+    SWP_NOSIZE, SWP_NOZORDER, WINDOWPOS, WM_SYSCOMMAND, WM_WINDOWPOSCHANGING, WNDPROC,
+    WS_EX_TOPMOST,
 };
 
-/// 已固定（pin）的 Box 窗口 → 原窗口过程指针（isize 存储规避裸指针跨容器所有权歧义）。
-/// 用于 `pin_wndproc` 把消息转发回原窗口过程，以及幂等判断是否已固定。
+/// 已固定的 Box 窗口 → 原窗口过程指针。
+///
+/// 存 `isize` 而非裸指针，规避「裸指针跨容器 + 跨线程」的所有权/`Send` 歧义；
+/// 用途有二：把消息转发回原窗口过程，以及幂等判断是否已固定。
 static PINNED_BOXES: OnceLock<Mutex<HashMap<isize, isize>>> = OnceLock::new();
 
-/// 当前被临时提升到 Box 之上的窗口（设置窗口）。Box 保持置顶不变，这里只记录
-/// 「谁应该在 Box 之上」，供新 Box 固定时维持相对顺序、以及恢复时降级该窗口。
-static RAISED_WINDOW: OnceLock<Mutex<Option<isize>>> = OnceLock::new();
+/// 最近一次探测到的「显示桌面」状态。
+///
+/// 用于两件事：诊断日志只在状态翻转时输出；以及判断是否需要在「Box 实际层级与
+/// 目标不符」时补一次排层（覆盖 Explorer / 其它应用扰动 Z 序的情况）。
+static DESKTOP_SHOWN: AtomicBool = AtomicBool::new(false);
 
-/// 置顶层窗口位置调整统一标志：只改 Z 序，不动位置、尺寸和激活状态。
+/// 诊断日志开关（`DASKTOP_BOX_DIAG=1`）的缓存值。
+static DIAG_ENABLED: OnceLock<bool> = OnceLock::new();
+
+/// 只改 Z 序的窗口位置标志：不动位置 / 尺寸 / 激活状态。
+///
+/// - `SWP_NOOWNERZORDER`：不连带调整 owner 窗口的 Z 序；
+/// - `SWP_NOSENDCHANGING`：**关键**。它抑制 `WM_WINDOWPOSCHANGING`，让本模块自己的
+///   排层调用绕过 `box_wndproc` 里「强制 `SWP_NOZORDER`」的拦截——
+///   否则 Box 永远无法离开底层，也无法进入置顶带。
 ///
 /// `SWP_*` 在 windows crate 里是 newtype，取 `.0` 后再包装成 `SET_WINDOW_POS_FLAGS`
 /// 才能在 const 上下文中拼接。
-const ZORDER_ONLY: SET_WINDOW_POS_FLAGS =
-    SET_WINDOW_POS_FLAGS(SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOACTIVATE.0);
+const ZORDER_ONLY: SET_WINDOW_POS_FLAGS = SET_WINDOW_POS_FLAGS(
+    SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOACTIVATE.0 | SWP_NOOWNERZORDER.0 | SWP_NOSENDCHANGING.0,
+);
 
-/// 把 Box 窗口固定为「置顶 + 免疫 Win+D」。
+/// Z 序链遍历上限，防御异常环境（Z 序环、超长链）下的死循环。
+const Z_ORDER_WALK_LIMIT: usize = 4000;
+
+/// Win+D 把「可最小化窗口」挪到屏幕外时使用的哨兵坐标。
+const MINIMIZE_SENTINEL: i32 = -32000;
+
+/// 把 Box 窗口固定到「桌面层」，使其不遮挡其它窗口、且在显示桌面时保持可见。
 ///
-/// 必须在窗口归属线程（主线程）调用。失败只返回错误描述，由服务层决定
-/// 是否降级（普通顶层窗口）或记录日志。
+/// 必须在窗口归属线程（主线程）调用。失败只返回错误描述，由服务层决定是否降级
+/// （保留 Tauri 默认的普通顶层窗口行为）或记录日志。
 pub fn glue_box_window_to_desktop(hwnd: HWND) -> Result<(), String> {
     if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
         return Err("窗口句柄已失效".to_string());
@@ -83,27 +110,21 @@ pub fn glue_box_window_to_desktop(hwnd: HWND) -> Result<(), String> {
     // 幂等：已固定则直接返回。
     let raw = hwnd.0 as isize;
     if let Some(pinned) = PINNED_BOXES.get() {
-        if pinned.lock().expect("pin mutex poisoned").contains_key(&raw) {
+        if pinned
+            .lock()
+            .expect("pin mutex poisoned")
+            .contains_key(&raw)
+        {
             return Ok(());
         }
     }
 
-    // SAFETY: hwnd 有效，调用在主线程。置顶 + 子类化窗口过程。
+    // SAFETY: hwnd 有效，调用在主线程。子类化窗口过程 + 调整 Z 序。
     unsafe {
-        // 1. 进入置顶层（置顶窗口天然不被 Win+D 隐藏）。
-        //    若此刻有窗口正被提升到 Box 之上（设置窗口已打开），则把新 Box 插到
-        //    它下方，避免刚创建的 Box 盖住已打开的设置窗口。
-        let insert_after = if topmost_disabled() {
-            HWND_NOTOPMOST
-        } else {
-            current_raised_window().unwrap_or(HWND_TOPMOST)
-        };
-        SetWindowPos(hwnd, Some(insert_after), 0, 0, 0, 0, ZORDER_ONLY)
-            .map_err(|error| format!("SetWindowPos 置顶失败: {error}"))?;
-
-        // 2. 子类化窗口过程，拦截 WM_WINDOWPOSCHANGING 兜底。
+        // 1. 先装拦截器，再做首次排层。
+        //    首次排层使用的标志含 SWP_NOSENDCHANGING，因此不会触发刚装上的拦截逻辑。
         let original_wndproc =
-            SetWindowLongPtrW(hwnd, GWLP_WNDPROC, pin_wndproc as *const () as isize);
+            SetWindowLongPtrW(hwnd, GWLP_WNDPROC, box_wndproc as *const () as isize);
         if original_wndproc == 0 {
             return Err("子类化窗口过程失败".to_string());
         }
@@ -113,117 +134,225 @@ pub fn glue_box_window_to_desktop(hwnd: HWND) -> Result<(), String> {
             .lock()
             .expect("pin mutex poisoned")
             .insert(raw, original_wndproc);
+
+        // 2. 首次排层：按当前桌面状态落到正确层级。
+        let desktop_shown = desktop_is_frontmost();
+        DESKTOP_SHOWN.store(desktop_shown, Ordering::SeqCst);
+        apply_box_band(hwnd, desktop_shown);
+
+        diag_log(&format!(
+            "pinned box hwnd=0x{raw:X} desktop_shown={desktop_shown}"
+        ));
     }
 
     Ok(())
 }
 
-/// 把指定窗口提升到所有已固定 Box 之上，解决「Box 置顶挡住主窗口」的问题。
+/// 是否还有存活的已固定 Box（供监视器跳过空转）。
+pub fn has_pinned_boxes() -> bool {
+    !live_pinned_boxes().is_empty()
+}
+
+/// 重新探测桌面状态并纠正所有 Box 的层级。**必须在主线程调用。**
 ///
-/// Box 必须保持置顶层才能免疫 Win+D/Win+M，因此不能靠降低 Box 层级来让路；
-/// 正确做法是让目标窗口**也进入置顶层，并排在 Box 前面**：
-///
-/// 1. 目标窗口 `SetWindowPos(HWND_TOPMOST)` 进入置顶层；
-/// 2. 把每个已固定的 Box `SetWindowPos` 插到目标窗口之后（即其下方）。
-///
-/// 两者都在置顶层，因而都保留 Win+D 免疫；Z 序上目标窗口在上，不再被挡。
-///
-/// 必须在窗口归属线程（主线程）调用。
-pub fn raise_window_above_boxes(hwnd: HWND) {
-    // 实验开关下 Box 是普通层级，设置窗激活后自然在它之上，无需额外排序。
-    if topmost_disabled() {
-        return;
-    }
-    if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+/// 由服务层的轮询线程按 `DESKTOP_STATE_POLL_INTERVAL` 周期调度。只做两件廉价的
+/// 只读判断（Z 序几何 + `WS_EX_TOPMOST` 样式位），仅在真正需要时才调用 `SetWindowPos`，
+/// 避免无谓的 Z 序扰动引发 WebView2 重绘。
+pub fn refresh_box_desktop_band() {
+    let boxes = live_pinned_boxes();
+    if boxes.is_empty() {
         return;
     }
 
-    RAISED_WINDOW
-        .get_or_init(Default::default)
-        .lock()
-        .expect("pin mutex poisoned")
-        .replace(hwnd.0 as isize);
+    let desktop_shown = desktop_is_frontmost();
+    let state_changed = DESKTOP_SHOWN.swap(desktop_shown, Ordering::SeqCst) != desktop_shown;
+    if state_changed {
+        diag_log(&format!(
+            "desktop state -> {}",
+            if desktop_shown { "SHOWN" } else { "NORMAL" }
+        ));
+    }
 
-    // SAFETY: hwnd 与已记录的 Box 句柄均有效，调用在主线程。
-    unsafe {
-        let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, ZORDER_ONLY);
-        // Box 插到目标窗口之后 → 位于其下方。
-        for box_hwnd in pinned_box_handles() {
-            let _ = SetWindowPos(box_hwnd, Some(hwnd), 0, 0, 0, 0, ZORDER_ONLY);
+    for box_hwnd in boxes {
+        // 状态翻转时无条件纠正；此外只要 Box 的实际「置顶与否」与目标不符就补一次，
+        // 覆盖 Explorer 或其它应用扰动 Z 序、把 Box「甩」出目标层级的情况。
+        if state_changed || is_topmost(box_hwnd) != desktop_shown {
+            apply_box_band(box_hwnd, desktop_shown);
         }
     }
 }
 
-/// 撤销 `raise_window_above_boxes`：Box 回到置顶层顶部，目标窗口退出置顶层。
+/// 判断桌面是否被提升到最前（即处于「显示桌面」状态）。
 ///
-/// 设置窗口隐藏时调用，避免它长期占据置顶层挡住其它应用。
-pub fn restore_boxes_on_top() {
-    if topmost_disabled() {
+/// 判据（Win11 24H2 实机验证）：
+///
+/// > 从 Z 序顶端向下遍历，遇到的**第一个「可见且非置顶」的顶层窗口**就是桌面宿主。
+///
+/// 普通状态下桌面宿主被 Explorer 钉在 Z 序最底层，遍历必然先撞上普通应用窗口而返回
+/// `false`；显示桌面时上方只剩置顶窗口（任务栏、本应用置顶窗口等）与不可见辅助窗口
+/// （IME / MSCTFIME UI 之类），于是会撞到桌面宿主本身而返回 `true`。
+///
+/// 该判据只看 Z 序几何、不看焦点，因此点击 Box 或点击桌面图标都不会误判——
+/// 这正是它优于 `GetForegroundWindow()` 比较的地方（后者会在用户点到 Box 时误判）。
+/// Rainmeter 的 `System::CheckDesktopState` 用隐藏辅助窗口的相对位置做等价判断。
+fn desktop_is_frontmost() -> bool {
+    let Some(host) = desktop_icons_host() else {
+        return false;
+    };
+
+    let Ok(first) = (unsafe { GetTopWindow(None) }) else {
+        return false;
+    };
+
+    let mut current = first;
+    for _ in 0..Z_ORDER_WALK_LIMIT {
+        if current == host {
+            return true;
+        }
+        // 可见的非置顶窗口出现在桌面宿主之前 ⇒ 桌面尚未被提升。
+        if unsafe { IsWindowVisible(current) }.as_bool() && !is_topmost(current) {
+            return false;
+        }
+        match unsafe { GetWindow(current, GW_HWNDNEXT) } {
+            Ok(next) => current = next,
+            Err(_) => return false,
+        }
+    }
+
+    false
+}
+
+/// 定位承载桌面图标的宿主窗口。
+///
+/// - Win11 24H2 起 Explorer 重排了桌面窗口层级，`Progman`（`GetShellWindow()`）直接
+///   持有 `SHELLDLL_DefView`（见 Rainmeter 的 `ShouldUseShellWindowAsDesktopIconsHost`，
+///   PR #413）；
+/// - 更早版本 `SHELLDLL_DefView` 挂在某个全屏 `WorkerW` 下，需要枚举查找。
+fn desktop_icons_host() -> Option<HWND> {
+    let shell = unsafe { GetShellWindow() };
+    if shell.0.is_null() {
+        // 默认 Shell（Explorer）未运行，无法判断桌面状态。
+        return None;
+    }
+
+    if find_child_of_class(shell, w!("SHELLDLL_DefView")).is_some() {
+        return Some(shell);
+    }
+
+    let mut previous: Option<HWND> = None;
+    loop {
+        let worker = unsafe { FindWindowExW(None, previous, w!("WorkerW"), PCWSTR::null()) }
+            .unwrap_or_default();
+        if worker.0.is_null() {
+            return None;
+        }
+        if find_child_of_class(worker, w!("SHELLDLL_DefView")).is_some() {
+            return Some(worker);
+        }
+        previous = Some(worker);
+    }
+}
+
+/// 在给定窗口的直接子窗口中按类名查找，找不到返回 `None`。
+fn find_child_of_class(parent: HWND, class: PCWSTR) -> Option<HWND> {
+    let child =
+        unsafe { FindWindowExW(Some(parent), None, class, PCWSTR::null()) }.unwrap_or_default();
+    (!child.0.is_null()).then_some(child)
+}
+
+/// 窗口是否处于置顶层（`WS_EX_TOPMOST`）。
+fn is_topmost(hwnd: HWND) -> bool {
+    (unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } & WS_EX_TOPMOST.0 as isize) != 0
+}
+
+/// 从给定窗口向上查找置顶带里「最靠后」的窗口。
+///
+/// 显示桌面时桌面宿主位于非置顶带顶端，因此它上方第一个置顶窗口就是置顶带的最底部一员。
+/// 把 Box 插到它之后，Box 即成为置顶带最底部窗口：高于被提升的桌面，低于任务栏 /
+/// PowerToys 等真正的置顶窗口。找不到时降级为 `HWND_TOPMOST`（置于置顶带顶部）。
+fn backmost_topmost_window(from: HWND) -> Option<HWND> {
+    let mut current = from;
+    for _ in 0..Z_ORDER_WALK_LIMIT {
+        current = unsafe { GetWindow(current, GW_HWNDPREV) }.ok()?;
+        if is_topmost(current) {
+            return Some(current);
+        }
+    }
+    None
+}
+
+/// 调整单个 Box 的 Z 序落点：只改层级，不动位置 / 尺寸 / 激活状态。
+fn set_box_z(box_hwnd: HWND, insert_after: HWND) {
+    // SAFETY: 句柄来自本模块记录，调用发生在主线程。
+    match unsafe { SetWindowPos(box_hwnd, Some(insert_after), 0, 0, 0, 0, ZORDER_ONLY) } {
+        Ok(()) => diag_log(&format!(
+            "box 0x{:X} -> insertAfter=0x{:X} topmost={}",
+            box_hwnd.0 as usize,
+            insert_after.0 as usize,
+            is_topmost(box_hwnd),
+        )),
+        Err(error) => eprintln!("failed to set box window band: {error}"),
+    }
+}
+
+/// 把单个 Box 落到与桌面状态匹配的层级。
+fn apply_box_band(box_hwnd: HWND, desktop_shown: bool) {
+    if !desktop_shown {
+        // 普通状态：`HWND_BOTTOM` = 所有窗口之下、桌面图标之上（同时清掉置顶样式）。
+        set_box_z(box_hwnd, HWND_BOTTOM);
         return;
     }
-    let raised = RAISED_WINDOW
-        .get()
-        .and_then(|slot| slot.lock().expect("pin mutex poisoned").take());
 
-    // SAFETY: 句柄来自本模块记录，调用在主线程。
-    unsafe {
-        for box_hwnd in pinned_box_handles() {
-            let _ = SetWindowPos(box_hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, ZORDER_ONLY);
-        }
-        if let Some(raw) = raised {
-            let hwnd = HWND(raw as *mut _);
-            if IsWindow(Some(hwnd)).as_bool() {
-                let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, ZORDER_ONLY);
-            }
-        }
+    // 显示桌面：必须进置顶带，否则会被提升到最前的桌面盖住。分两步，与 Rainmeter 的
+    // `System::PrepareHelperWindow` / `Skin::ChangeZPos` 做法一致：
+    //
+    // 1. 先显式置顶，真正拿到 `WS_EX_TOPMOST` 样式位。**只把窗口插到「最靠后的置顶窗口」
+    //    之后并不会让它变成置顶窗口**——MSDN 的判据是「被排到所有置顶窗口之上」，
+    //    插在置顶带下方只会让它留在非置顶带顶端。实测正是这个坑：漏掉这一步时窗口虽然
+    //    高于桌面，却不带置顶样式，会被每轮的「样式与目标不符」检查反复重排。
+    // 2. 再插到「最靠后的置顶窗口」之后，落到置顶带**最底部**：高于桌面、低于任务栏。
+    set_box_z(box_hwnd, HWND_TOPMOST);
+
+    let anchor = desktop_icons_host()
+        .and_then(backmost_topmost_window)
+        // 第 1 步后 Box 位于置顶带最顶部，理论上不会命中自己；防御性过滤掉。
+        .filter(|anchor| *anchor != box_hwnd)
+        .unwrap_or(HWND_TOPMOST);
+    set_box_z(box_hwnd, anchor);
+}
+
+/// 读取当前存活的已固定 Box 句柄，顺带清理已销毁窗口的陈旧记录。
+fn live_pinned_boxes() -> Vec<HWND> {
+    let Some(pinned) = PINNED_BOXES.get() else {
+        return Vec::new();
+    };
+    let mut pinned = pinned.lock().expect("pin mutex poisoned");
+
+    let dead: Vec<isize> = pinned
+        .keys()
+        .copied()
+        // SAFETY: 只用返回值判断窗口是否仍存在，不解引用任何指针。
+        .filter(|raw| !unsafe { IsWindow(Some(HWND(*raw as *mut _))) }.as_bool())
+        .collect();
+    for raw in dead {
+        pinned.remove(&raw);
     }
+
+    pinned.keys().map(|raw| HWND(*raw as *mut _)).collect()
 }
 
-/// 读取当前被提升到 Box 之上的窗口；窗口已销毁或从未提升时返回 None。
-fn current_raised_window() -> Option<HWND> {
-    let raw = RAISED_WINDOW
-        .get()
-        .and_then(|slot| *slot.lock().expect("pin mutex poisoned"))?;
-    let hwnd = HWND(raw as *mut _);
-    // SAFETY: 句柄来自本模块记录，IsWindow 判定其是否仍有效。
-    unsafe { IsWindow(Some(hwnd)) }.as_bool().then_some(hwnd)
-}
-
-/// 实验开关：置 `1` 时 Box 不进入置顶层，仅靠子类化拦截免疫 Win+D。
+/// Box 窗口的替换过程，实现「桌面层」语义所需的全部消息拦截。
 ///
-/// 用于验证「去掉 `HWND_TOPMOST` 后 Win+D 免疫是否仍成立」。这决定了 Box 能否做到
-/// 「既不遮挡任何应用窗口，又在显示桌面时保留」——置顶层必然遮挡其它应用，只有
-/// 证明普通层级也能免疫，才能彻底解决遮挡。验证结论出来后由设置项取代本开关。
-fn topmost_disabled() -> bool {
-    std::env::var("DASKTOP_BOX_NO_TOPMOST")
-        .map(|value| value == "1")
-        .unwrap_or(false)
-}
-
-/// 快照当前所有已固定 Box 的句柄，避免在持锁状态下调用 Win32（可能重入）。
-fn pinned_box_handles() -> Vec<HWND> {
-    PINNED_BOXES
-        .get()
-        .map(|pinned| {
-            pinned
-                .lock()
-                .expect("pin mutex poisoned")
-                .keys()
-                .map(|raw| HWND(*raw as *mut _))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// 拦截两类消息，让 Box 在「显示桌面」和「全部最小化」时都保持可见：
-///
-/// - `WM_WINDOWPOSCHANGING`：阻止 Win+D 把窗口移到 (-32000, -32000)，并强制
-///   保持置顶。Win+D 的机制是向所有**普通 Z 序**窗口发该消息尝试把它们移到
-///   哨兵坐标。置顶窗口通常不参与，但作为兜底，这里在收到该消息时阻止移动
-///   并强制 `HWND_TOPMOST`。
-/// - `WM_SYSCOMMAND + SC_MINIMIZE`：Win+M 及一切最小化命令。直接返回 0 不转发，
-///   窗口保持可见，不进入最小化状态。
-unsafe extern "system" fn pin_wndproc(
+/// - `WM_WINDOWPOSCHANGING`：
+///   1. 强制 `SWP_NOZORDER`——Box 不参与 Z 序竞争（对应 Rainmeter 对
+///      `ZPOSITION_ONDESKTOP` 的处理，见 `Skin::OnWindowPosChanging`）。这是
+///      「点击它也不会浮到其它窗口之上」的关键；本模块自己的排层调用带
+///      `SWP_NOSENDCHANGING`，不会走到这里，因此不影响层级纠正。
+///   2. Win+D 若仍向本窗口发哨兵移动 `(-32000, -32000)`，加 `SWP_NOMOVE | SWP_NOSIZE`
+///      兜底拦住（样式上本已不该被命中，纯保险）。
+/// - `WM_SYSCOMMAND + SC_MINIMIZE`：Win+M「全部最小化」及一切最小化命令。直接返回 0
+///   不转发，窗口保持可见。**注意**：这会让 Box 无法通过任何方式最小化。
+unsafe extern "system" fn box_wndproc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
@@ -233,21 +362,29 @@ unsafe extern "system" fn pin_wndproc(
         // SAFETY: WM_WINDOWPOSCHANGING 的 lparam 指向 WINDOWPOS 结构。
         let pos = lparam.0 as *mut WINDOWPOS;
         if !pos.is_null() {
-            let pos_ref = unsafe { &mut *pos };
-            if pos_ref.x == -32000 {
-                // 阻止 Win+D 的哨兵移动，并强制保持置顶。
-                pos_ref.flags |= SWP_NOMOVE | SWP_NOSIZE;
+            let pos = unsafe { &mut *pos };
+            if pos.x == MINIMIZE_SENTINEL {
+                pos.flags |= SWP_NOMOVE | SWP_NOSIZE;
+                diag_log("intercepted Win+D sentinel move");
             }
-            pos_ref.hwndInsertAfter = HWND_TOPMOST;
+            pos.flags |= SWP_NOZORDER;
         }
     } else if msg == WM_SYSCOMMAND && wparam.0 as u32 & 0xFFF0 == SC_MINIMIZE {
-        // 拦截 Win+M（及最小化命令）：Box 常驻桌面，不响应最小化。
-        // 直接返回 0 表示已处理，不转发给原窗口过程，窗口保持可见。
+        diag_log("intercepted SC_MINIMIZE");
         return LRESULT(0);
     }
 
-    // 转发给原窗口过程。
-    let original = PINNED_BOXES
+    // 转发给原窗口过程（Tauri / WebView2 的窗口过程）。
+    let original = original_wndproc(hwnd);
+    match original {
+        Some(original) => unsafe { CallWindowProcW(original, hwnd, msg, wparam, lparam) },
+        None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
+
+/// 取回窗口被替换前的原过程指针。
+fn original_wndproc(hwnd: HWND) -> Option<WNDPROC> {
+    PINNED_BOXES
         .get()
         .and_then(|pinned| {
             pinned
@@ -256,10 +393,40 @@ unsafe extern "system" fn pin_wndproc(
                 .get(&(hwnd.0 as isize))
                 .copied()
         })
-        .map(|ptr| unsafe { std::mem::transmute::<isize, WNDPROC>(ptr) });
+        // SAFETY: 指针由 SetWindowLongPtrW 返回，指向该窗口原始的窗口过程。
+        .map(|raw| unsafe { std::mem::transmute::<isize, WNDPROC>(raw) })
+}
 
-    match original {
-        Some(original) => CallWindowProcW(original, hwnd, msg, wparam, lparam),
-        None => DefWindowProcW(hwnd, msg, wparam, lparam),
+/// 诊断日志文件路径：`%TEMP%\dasktop-box-diag.log`。
+fn diag_log_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("dasktop-box-diag.log")
+}
+
+/// 是否启用诊断日志（`DASKTOP_BOX_DIAG=1`）。读取一次后缓存。
+fn diag_enabled() -> bool {
+    *DIAG_ENABLED.get_or_init(|| {
+        let enabled = std::env::var("DASKTOP_BOX_DIAG")
+            .map(|value| value == "1")
+            .unwrap_or(false);
+        if enabled {
+            eprintln!("[desktop_glue] 诊断日志已启用: {}", diag_log_path().display());
+        }
+        enabled
+    })
+}
+
+/// 追加一行诊断日志；未启用或写入失败时静默忽略（诊断不得影响主流程）。
+///
+/// 逐行 open/append/close，避免长驻文件句柄随窗口销毁泄漏；诊断频率低，开销可忽略。
+fn diag_log(line: &str) {
+    if !diag_enabled() {
+        return;
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(diag_log_path())
+    {
+        let _ = writeln!(file, "{line}");
     }
 }

@@ -139,7 +139,7 @@ export async function openBoxWindow(
       if (shouldShowInitially && !shouldFocus) {
         await window.show();
       }
-      // 挂载后立即固定为「置顶 + 免疫 Win+D」；固定后台执行，失败只降级为普通顶层窗口，不阻断打开流程
+      // 挂载后立即落到「桌面层」；后台执行，失败只降级为普通顶层窗口，不阻断打开流程
       void glueBoxWindowToDesktopSafely(label);
       resolve();
     });
@@ -148,11 +148,11 @@ export async function openBoxWindow(
 }
 
 /**
- * 桌面置顶固定的兜底包装：失败只记录警告，避免吞掉 Box 打开主流程
+ * 桌面层固定的兜底包装：失败只记录警告，避免吞掉 Box 打开主流程
  */
 function glueBoxWindowToDesktopSafely(label: string): Promise<void> {
   return glueBoxWindowToDesktop(label).catch((error) => {
-    console.warn(`[desktopBox] 窗口 ${label} 桌面固定失败，保持普通顶层窗口`, error);
+    console.warn(`[desktopBox] 窗口 ${label} 桌面层固定失败，保持普通顶层窗口`, error);
   });
 }
 

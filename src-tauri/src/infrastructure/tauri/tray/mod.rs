@@ -9,9 +9,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{App, Manager};
 
 pub use autostart::{resolve_autostart_enabled, set_autostart_enabled};
-pub(crate) use window::{
-    handle_settings_focus_change, handle_window_close_requested, show_settings_window,
-};
+pub(crate) use window::{handle_window_close_requested, show_settings_window};
 
 /// 初始化系统托盘图标和右键菜单；菜单只分发动作，具体 Box 生命周期仍由前端统一处理。
 pub fn setup_app_tray(app: &App) -> tauri::Result<()> {

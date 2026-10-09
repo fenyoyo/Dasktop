@@ -1,18 +1,23 @@
-//! Box 窗口的「桌面置顶固定」用例。
+//! Box 窗口的「桌面层」（On Desktop）用例。
 //!
-//! Win+D「显示桌面」会隐藏普通 Z 序窗口，违背「Box 常驻桌面」的产品语义。
-//! 正确的做法是把 Box 固定为「置顶 + 免疫 Win+D」（Pin Mode），详见
-//! `desktop_glue`。Box 保持普通顶层窗口，WebView2 输入链不受影响。
+//! 目标语义有两条互相拉扯的约束：**不遮挡任何窗口** 且 **显示桌面时保持可见**。
+//! 实现方式是把 Box 落到桌面层（普通状态下位于 `HWND_BOTTOM`），并轮询
+//! 「显示桌面」状态在必要时把它搬进置顶带——完整机理见 `desktop_glue` 模块文档。
 //!
-//! 这里把固定决策放在服务层：校验 label 确实是 Box 窗口后，先在工作线程
-//! 解析窗口句柄并做短重试，再把底层固定调度回主线程（窗口归属线程）执行。
+//! 本模块负责三件编排工作：
 //!
-//! 为什么句柄解析不在主线程做：实测在 `tauri://created` 后立即从主线程
-//! 内联调用 `hwnd()` 会命中 dispatcher 的重入窗口期，返回
-//! 「the underlying handle is not available」；工作线程调用走事件队列
-//! 异步应答，天然避开该问题，重试则兜底注册时序的抖动。
-//! 底层固定失败只记录日志并保持原有顶层窗口行为，不向用户抛错中断打开流程。
+//! 1. **固定单个 Box**：校验 label 确实是 Box 窗口后，在工作线程解析窗口句柄并做短
+//!    重试，再把底层固定调度回主线程（窗口归属线程）执行。
+//! 2. **启动全局状态监视**：桌面状态的翻转是全局事件、与具体 Box 无关，因此每进程
+//!    只启动一条轮询线程；它只负责把「重新排层」这个动作投递到主线程执行。
+//! 3. **降级**：底层固定失败只记录日志并保留 Tauri 默认的顶层窗口行为，不向用户抛错
+//!    中断打开流程。
+//!
+//! 为什么句柄解析不在主线程做：实测在 `tauri://created` 后立即从主线程内联调用
+//! `hwnd()` 会命中 dispatcher 的重入窗口期，返回「the underlying handle is not
+//! available」；工作线程调用走事件队列异步应答，天然避开该问题，重试则兜底注册时序抖动。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
@@ -28,24 +33,73 @@ const HANDLE_RESOLVE_RETRY_LIMIT: usize = 20;
 /// 句柄解析重试间隔；过短会空转，过长拖慢吸附生效时间。
 const HANDLE_RESOLVE_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
-/// 把指定 Box 窗口固定为「置顶 + 免疫 Win+D」，使其在显示桌面时保持可见。
+/// 桌面状态轮询间隔。
 ///
-/// 固定在后台异步推进，本函数只负责校验和调度，立即返回。
+/// 150ms 是「Win+D 后 Box 回归桌面的延迟」与「轮询开销」之间的折中：单次探测只做
+/// 一次 Z 序短路遍历（撞到第一个可见非置顶窗口即返回，正常状态下只走几十步），
+/// 开销可忽略。Rainmeter 用 250ms 定时器 + `EVENT_SYSTEM_FOREGROUND` 钩子达到同等
+/// 效果，本实现先用纯轮询换取更少的活动部件。
+const DESKTOP_STATE_POLL_INTERVAL: Duration = Duration::from_millis(150);
+
+/// 桌面状态监视线程是否已启动（每进程只启动一次）。
+static MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// 把指定 Box 窗口落到「桌面层」，使其不遮挡其它窗口且在显示桌面时保持可见。
+///
+/// 固定与监视均在后台异步推进，本函数只负责校验和调度，立即返回。
 pub fn glue_box_window_to_desktop(app: &AppHandle, window_label: &str) -> Result<(), String> {
     if !is_box_window_label(window_label) {
-        return Err("只有 Box 窗口允许桌面置顶固定".to_string());
+        return Err("只有 Box 窗口允许固定到桌面层".to_string());
     }
+
+    // 桌面状态翻转是全局事件，与具体 Box 无关，因此在这里顺带保证监视线程已启动。
+    start_desktop_state_monitor(app);
 
     let app_handle = app.clone();
     let label = window_label.to_string();
     std::thread::Builder::new()
         .name("box-desktop-glue".into())
         .spawn(move || glue_on_worker_thread(app_handle, label))
-        .map_err(|error| format!("无法调度 Box 桌面固定: {error}"))?;
+        .map_err(|error| format!("无法调度 Box 桌面层固定: {error}"))?;
     Ok(())
 }
 
-/// 工作线程入口：解析句柄后把桌面固定调度回主线程。
+/// 启动桌面状态轮询线程；已启动过则直接返回。
+///
+/// 线程自身不碰任何 Win32 窗口操作，只把「重新排层」投递到主线程——`SetWindowPos`
+/// 与子类化过程都必须在窗口归属线程上执行。
+fn start_desktop_state_monitor(app: &AppHandle) {
+    if MONITOR_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let app_handle = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("box-desktop-monitor".into())
+        .spawn(move || loop {
+            std::thread::sleep(DESKTOP_STATE_POLL_INTERVAL);
+
+            // 没有存活的 Box 就不必打扰主线程；Box 全部关闭后线程继续空转待命。
+            if !desktop_glue::has_pinned_boxes() {
+                continue;
+            }
+
+            if let Err(error) =
+                app_handle.run_on_main_thread(desktop_glue::refresh_box_desktop_band)
+            {
+                // 应用正在退出：主线程事件循环已不可用，线程自行结束。
+                eprintln!("box desktop monitor stopped: {error}");
+                return;
+            }
+        });
+
+    if let Err(error) = spawned {
+        MONITOR_STARTED.store(false, Ordering::SeqCst);
+        eprintln!("failed to spawn box desktop monitor: {error}");
+    }
+}
+
+/// 工作线程入口：解析句柄后把桌面层固定调度回主线程。
 fn glue_on_worker_thread(app: AppHandle, label: String) {
     // HWND 内部是裸指针不满足 Send，跨线程只传 isize，主线程侧再还原。
     let Some(hwnd) = resolve_window_handle(&app, &label).map(|hwnd| hwnd.0 as isize) else {
@@ -53,10 +107,10 @@ fn glue_on_worker_thread(app: AppHandle, label: String) {
         return;
     };
 
-    // 置顶 + 子类化必须在窗口归属线程（主线程）执行；工作线程只负责解析句柄。
+    // 排层 + 子类化必须在窗口归属线程（主线程）执行；工作线程只负责解析句柄。
     if let Err(error) = app.run_on_main_thread(move || {
         if let Err(error) = desktop_glue::glue_box_window_to_desktop(HWND(hwnd as *mut _)) {
-            eprintln!("failed to glue box window to desktop host: {error}");
+            eprintln!("failed to glue box window to desktop layer: {error}");
         }
     }) {
         eprintln!("failed to dispatch desktop glue for {label}: {error}");
@@ -70,9 +124,7 @@ fn resolve_window_handle(app: &AppHandle, label: &str) -> Option<HWND> {
             match webview_window.hwnd() {
                 Ok(hwnd) => return Some(hwnd),
                 Err(error) => {
-                    eprintln!(
-                        "resolve box window {label} handle attempt {attempt} failed: {error}"
-                    );
+                    eprintln!("resolve box window {label} handle attempt {attempt} failed: {error}");
                 }
             }
         }
