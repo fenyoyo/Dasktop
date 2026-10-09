@@ -8,10 +8,18 @@ import { resolvePluginPageUrl } from "./api";
  * 「一个插件一个窗口」而不是「一个窗口换内容」：省掉跨窗口通知它换页面的那套事件握手，
  * 每个插件的页面状态也天然独立，切回来不会丢。
  *
- * 这些窗口**刻意不出现在 capabilities 白名单里**。Windows 上 `http://plugin.localhost`
- * 会被判定为「本机来源」（见 tauri 的 `is_local_url`），一旦给它授权，插件页面就能直接
- * invoke 宿主命令，能力门控等于不存在。不给授权时它连 `__TAURI_INTERNALS__` 都调不动，
- * 是一个彻底的普通网页。
+ * 这些窗口**刻意不出现在任何 capability 里**。这道防线有两层，缺一不可：
+ *
+ * 1. 应用命令的鉴权**只有存在 app ACL manifest 时才生效**。Tauri 的判定是
+ *    `plugin_command.is_some() || has_app_acl_manifest || !is_local`（见 tauri 的
+ *    `webview/mod.rs`），而插件窗口的 `http://plugin.localhost` 会被 `is_local_url`
+ *    判定为**本机来源**——三个条件里它只可能命中中间那个。所以 `src-tauri/permissions/`
+ *    下的 app 权限定义是必需项，缺了它插件页面能无门控地调宿主任何一条命令。
+ * 2. 有了 app ACL 之后，授权与否完全看 capability 的窗口模式是否匹配。这里一条都不给。
+ *
+ * 注意别写成「不给授权它就拿不到 `__TAURI_INTERNALS__`」——恰恰相反，那个注入脚本是加在
+ * **每个** Tauri 创建的 webview 上的（`manager/webview.rs`），插件页面照样能调
+ * `window.__TAURI_INTERNALS__.invoke(...)`，被拦下来靠的是上面这条 ACL，不是拿不到入口。
  */
 
 /**

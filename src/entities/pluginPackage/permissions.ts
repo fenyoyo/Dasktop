@@ -6,9 +6,13 @@ import { PLUGIN_PERMISSIONS, type PluginPermission } from "./types";
  * 映射表是「权限 → 能力」的唯一事实来源：设置页展示插件权限时用它生成说明文案，
  * 避免界面文案和真实能力各写一套。
  *
- * `command` 指向真实存在的 Rust 命令。这些命令当前没有调用方——插件页面不在
- * capabilities 白名单内，因此无法 invoke。这份映射是为宿主注入受控桥准备的：
- * 届时能力请求按权限分流到对应的命令，而权限判定的落点仍然在宿主这一侧。
+ * `command` 指向真实存在的 Rust 命令。这些命令当前没有调用方：插件窗口不在任何 capability
+ * 里，所以插件页面的 invoke 会被 ACL 拒掉（拦住它的是 `src-tauri/permissions/` 的 app 权限
+ * 定义 + capability 的窗口模式，不是「拿不到 invoke 入口」——注入脚本对每个 webview 都生效）。
+ *
+ * 这份映射是为受控桥准备的：届时按清单权限把页面请求分流到对应命令。但要记住**注入到页面的
+ * 对象只是便利层**——插件完全可以换掉它、或绕过它直接构造一次 `__TAURI_INTERNALS__.invoke`，
+ * 所以真正的判据只能落在 ACL 与宿主侧收到的请求上。
  */
 export interface PluginPermissionDefinition {
   /** 该权限对应的宿主命令名。 */
