@@ -28,6 +28,8 @@ base64 = "0.22.1"
 indexmap = { version = "1.9.3", features = ["std"] }
 png = "0.18.1"
 serde = { version = "1.0.228", features = ["derive"] }
+# 插件清单解析需要 JSON 反序列化；该 crate 已由 tauri 传递依赖引入，此处显式声明以直接使用。
+serde_json = "1.0.150"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 # Tauri 要求 Rust crate 与前端 NPM 包保持同一 major/minor，故锁定到 2.11.x 对齐 @tauri-apps/api 2.11.0
 tauri = { version = "~2.11.2", features = ["tray-icon"] }

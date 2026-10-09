@@ -3,3 +3,4 @@
 pub mod app;
 pub mod desktop;
 pub mod filesystem;
+pub mod plugin;

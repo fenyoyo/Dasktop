@@ -1,0 +1,7 @@
+{
+  "id": "hello-dasktop",
+  "name": "Hello Dasktop",
+  "version": "0.1.0",
+  "entry": "index.js",
+  "permissions": ["fs:read", "fs:write", "log:write", "ui:notify"]
+}

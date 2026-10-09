@@ -10,6 +10,7 @@ dependencies = [
  "indexmap 1.9.3",
  "png 0.18.1",
  "serde",
+ "serde_json",
  "sqlx",
  "tauri",
  "tauri-build",
