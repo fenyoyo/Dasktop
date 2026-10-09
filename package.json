@@ -19,6 +19,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "verify:acl": "node scripts/verify-acl.mjs",
     "verify:plugins": "node scripts/verify-plugins.mjs"
   },
   "dependencies": {
