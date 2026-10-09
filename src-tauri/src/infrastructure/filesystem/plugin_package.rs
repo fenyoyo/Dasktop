@@ -6,9 +6,8 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::domain::plugin::{
-    PluginManifest, PluginPackageRecord, PluginScanResult, PLUGIN_DATA_MAX_BYTES,
-    PLUGIN_ENTRY_MAX_BYTES, PLUGIN_ID_MAX_LENGTH, PLUGIN_MANIFEST_FILE_NAME, SAMPLE_ENTRY_FILE_NAME,
-    SAMPLE_ENTRY_SOURCE, SAMPLE_MANIFEST, SAMPLE_PACKAGE_ID,
+    PluginManifest, PluginPackageRecord, PluginScanResult, SamplePackage, PLUGIN_DATA_MAX_BYTES,
+    PLUGIN_ENTRY_MAX_BYTES, PLUGIN_ID_MAX_LENGTH, PLUGIN_MANIFEST_FILE_NAME, SAMPLE_PACKAGES,
 };
 
 /// 目录扫描时跳过的宿主自用目录首字符集合。
@@ -81,6 +80,11 @@ pub fn scan_packages(root: &Path) -> Result<PluginScanResult, String> {
 ///
 /// 判据是「有没有子目录」而不是「目录是否为空」：只要用户曾经放过插件（哪怕之后删掉），
 /// 就不再补写示例，避免示例包反复出现、看起来像删不掉的垃圾。
+///
+/// **整批一起写**：先把全部包写入临时目录再改名到最终位置的做法在此不必要——写入失败时
+/// 已落盘的包留在磁盘上并不是安全问题（它们本就是只读样本），而任何一次「用户已有插件」
+/// 之后的启动都不会再补写，不会出现反复补写补不齐的循环。因此这里只保证「失败即返回
+/// 明确错误」，不做事务式回滚。
 pub fn seed_sample_package_if_empty(root: &Path) -> Result<bool, String> {
     ensure_root(root)?;
 
@@ -88,16 +92,39 @@ pub fn seed_sample_package_if_empty(root: &Path) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let package_dir = root.join(SAMPLE_PACKAGE_ID);
-    std::fs::create_dir_all(&package_dir)
-        .map_err(|error| format!("无法创建示例插件目录 {}：{error}", package_dir.display()))?;
-
-    std::fs::write(package_dir.join(PLUGIN_MANIFEST_FILE_NAME), SAMPLE_MANIFEST)
-        .map_err(|error| format!("无法写入示例插件清单：{error}"))?;
-    std::fs::write(package_dir.join(SAMPLE_ENTRY_FILE_NAME), SAMPLE_ENTRY_SOURCE)
-        .map_err(|error| format!("无法写入示例插件入口：{error}"))?;
+    for package in SAMPLE_PACKAGES {
+        write_sample_package(root, package)?;
+    }
 
     Ok(true)
+}
+
+/// 把单个内置示例包写入插件根目录。
+///
+/// 逐包写入而不是内联在循环里，是为了让错误信息带上具体包名——两个包中任一写失败时，
+/// 用户需要知道是哪一个，否则只能看到一个「无法写入示例插件入口」的笼统提示。
+fn write_sample_package(root: &Path, package: &SamplePackage) -> Result<(), String> {
+    let package_dir = root.join(package.package_id);
+    std::fs::create_dir_all(&package_dir).map_err(|error| {
+        format!(
+            "无法创建示例插件目录 {}：{error}",
+            package_dir.display()
+        )
+    })?;
+
+    std::fs::write(
+        package_dir.join(PLUGIN_MANIFEST_FILE_NAME),
+        package.manifest_source,
+    )
+    .map_err(|error| format!("无法写入示例插件 {} 的清单：{error}", package.package_id))?;
+
+    std::fs::write(
+        package_dir.join(package.entry_file_name),
+        package.entry_source,
+    )
+    .map_err(|error| format!("无法写入示例插件 {} 的入口：{error}", package.package_id))?;
+
+    Ok(())
 }
 
 /// 按插件 id 定位插件包目录。
@@ -388,8 +415,12 @@ mod tests {
         package_dir
     }
 
+    /// 断言全部内置示例包都完整落盘、可被扫描、可读出入口源码。
+    ///
+    /// 这里刻意对 `SAMPLE_PACKAGES` 逐个遍历而不是硬编码两个包名：以后再加示例包时，
+    /// 测试自动覆盖新包；硬编码会让新包「悄悄不被测」。
     #[test]
-    fn seeds_and_reads_back_embedded_sample_package() {
+    fn seeds_and_reads_back_embedded_sample_packages() {
         let fixture = TempPackage::new("seed-sample");
 
         assert!(
@@ -402,30 +433,65 @@ mod tests {
         );
 
         let scan = scan_packages(&fixture.root).expect("扫描应成功");
-        assert_eq!(scan.packages.len(), 1, "只应存在示例包一个插件包");
-
-        let sample = &scan.packages[0];
-        assert_eq!(sample.id, SAMPLE_PACKAGE_ID);
-        assert!(
-            sample.error.is_none(),
-            "内嵌示例包应能通过扫描：{:?}",
-            sample.error
-        );
-
-        let manifest = sample.manifest.as_ref().expect("示例包应解析出清单");
-        assert_eq!(manifest.id, SAMPLE_PACKAGE_ID, "内嵌清单 id 必须与目录名一致");
         assert_eq!(
-            manifest.entry, SAMPLE_ENTRY_FILE_NAME,
-            "内嵌清单 entry 必须与播种时写入的文件名一致"
+            scan.packages.len(),
+            SAMPLE_PACKAGES.len(),
+            "播种后扫描出的包数应与内置示例包数量一致"
         );
 
-        // 播种出的包必须能走通入口读取链路，否则加载器会在读取源码这一步失败。
-        let package_dir = fixture.root.join(SAMPLE_PACKAGE_ID);
-        let source = read_entry_source(&package_dir, manifest).expect("示例包入口应可读取");
-        assert!(
-            source.contains("export async function activate"),
-            "示例包入口应导出 activate"
-        );
+        for package in SAMPLE_PACKAGES {
+            let record = scan
+                .packages
+                .iter()
+                .find(|record| record.id == package.package_id)
+                .unwrap_or_else(|| panic!("示例包 {} 未被扫描到", package.package_id));
+
+            assert!(
+                record.error.is_none(),
+                "内嵌示例包 {} 应能通过扫描：{:?}",
+                package.package_id,
+                record.error
+            );
+
+            let manifest = record.manifest.as_ref().expect("示例包应解析出清单");
+            assert_eq!(
+                manifest.id, package.package_id,
+                "内嵌清单 id 必须与目录名一致"
+            );
+            assert_eq!(
+                manifest.entry, package.entry_file_name,
+                "内嵌清单 entry 必须与播种时写入的文件名一致"
+            );
+
+            // 播种出的包必须能走通入口读取链路，否则加载器会在读取源码这一步失败。
+            let package_dir = fixture.root.join(package.package_id);
+            let source = read_entry_source(&package_dir, manifest).expect("示例包入口应可读取");
+            assert!(
+                source.contains("export async function activate"),
+                "示例包 {} 入口应导出 activate",
+                package.package_id
+            );
+        }
+    }
+
+    /// 清单声明的 `entry` 必须真的存在于包目录里。
+    ///
+    /// 覆盖的是「作者改了清单却没同步文件名」这类错误：它不会在扫描阶段暴露，
+    /// 而是等到加载器读源码时才报「插件文件不可读」，排查起来多绕一层。
+    #[test]
+    fn embedded_sample_manifests_declare_existing_entry_files() {
+        for package in SAMPLE_PACKAGES {
+            let manifest: PluginManifest = serde_json::from_str(package.manifest_source)
+                .unwrap_or_else(|error| {
+                    panic!("示例包 {} 的清单不是合法 JSON：{error}", package.package_id)
+                });
+
+            assert_eq!(
+                manifest.entry, package.entry_file_name,
+                "示例包 {} 的清单 entry 与 entry_file_name 不一致",
+                package.package_id
+            );
+        }
     }
 
     #[test]

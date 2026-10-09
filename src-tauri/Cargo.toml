@@ -27,6 +27,17 @@ base64 = "0.22.1"
 # 导致其 IndexMap<K, V> 缺失默认哈希参数而编译失败。此处显式开启 std feature 强制走 CARGO_FEATURE_STD 分支。
 indexmap = { version = "1.9.3", features = ["std"] }
 png = "0.18.1"
+# 插件 net:request 能力需要带 TLS 的 HTTP 客户端。
+# 刻意关闭默认特性：reqwest 0.13 的 default-tls 会启用 __rustls-aws-lc-rs，而 aws-lc-sys
+# 在 Windows 上需要 cmake/nasm 做原生编译（本机均无）。改走 native-tls（系统 schannel），
+# 是纯 FFI 绑定，没有原生编译步骤；system-proxy 让请求遵循系统代理设置。
+reqwest = { version = "0.13", default-features = false, features = [
+  "charset",
+  "http2",
+  "json",
+  "native-tls",
+  "system-proxy",
+] }
 serde = { version = "1.0.228", features = ["derive"] }
 # 插件清单解析需要 JSON 反序列化；该 crate 已由 tauri 传递依赖引入，此处显式声明以直接使用。
 serde_json = "1.0.150"

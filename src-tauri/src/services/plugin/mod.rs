@@ -13,9 +13,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::plugin::{
-    PluginScanResult, PLUGIN_LOG_DIR_NAME, PLUGIN_NOTIFICATION_EVENT, PLUGIN_ROOT_DIR_NAME,
+    PluginHttpRequest, PluginHttpResponse, PluginScanResult, PLUGIN_LOG_DIR_NAME,
+    PLUGIN_NOTIFICATION_EVENT, PLUGIN_ROOT_DIR_NAME,
 };
 use crate::infrastructure::filesystem::{plugin_log, plugin_package};
+use crate::infrastructure::http;
 use crate::infrastructure::windows::shell_file;
 
 /// 宿主转发给界面的插件通知载荷。
@@ -117,6 +119,41 @@ pub fn notify_from_plugin(
 
     app.emit(PLUGIN_NOTIFICATION_EVENT, payload)
         .map_err(|error| format!("插件通知广播失败：{error}"))
+}
+
+/// 代表插件发起 HTTP 请求，对应 `net:request` 能力。
+///
+/// 发起与完成各记一行日志：网络能力是插件里最难复现的一类行为，出问题时
+/// 「发过哪些请求、最终什么状态」往往比插件自己的报错更有定位价值。
+/// 失败路径只留下「发起」那一行，正好说明请求没有拿到响应。
+pub async fn http_request(
+    app: &AppHandle,
+    plugin_id: &str,
+    request: PluginHttpRequest,
+) -> Result<PluginHttpResponse, String> {
+    if !plugin_package::is_valid_plugin_id(plugin_id) {
+        return Err(format!("非法插件 id：{plugin_id}"));
+    }
+
+    let method = request
+        .method
+        .as_deref()
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "GET".to_string());
+
+    write_plugin_log(app, plugin_id, "net", &format!("{method} {}", request.url))?;
+
+    let response = http::send(&request).await?;
+
+    write_plugin_log(
+        app,
+        plugin_id,
+        "net",
+        &format!("{method} {} -> {}", request.url, response.status),
+    )?;
+
+    Ok(response)
 }
 
 /// 用系统资源管理器打开插件根目录，方便用户手工安装或替换插件包。

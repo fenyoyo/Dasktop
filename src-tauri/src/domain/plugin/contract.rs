@@ -35,3 +35,14 @@ pub const PLUGIN_ID_MAX_LENGTH: usize = 64;
 
 /// 宿主向插件广播通知的事件名，前端宿主面板与插件通知出口共享同一常量。
 pub const PLUGIN_NOTIFICATION_EVENT: &str = "dasktop://plugin-notification";
+
+/// 插件网络请求的超时时间，单位为秒。
+///
+/// 没有超时的话，目标站点不响应时插件会永远等不到结果，用户也看不到任何提示；
+/// 插件与宿主同处一个进程，挂起的请求会一直占着异步任务。
+pub const PLUGIN_HTTP_TIMEOUT_SECS: u64 = 20;
+
+/// 插件网络响应体的读取上限，单位为字节。
+///
+/// 响应体会整体序列化后跨 IPC 交给前端，不设上限的话一次大文件下载就能把内存打满。
+pub const PLUGIN_HTTP_RESPONSE_MAX_BYTES: usize = 2 * 1024 * 1024;

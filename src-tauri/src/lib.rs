@@ -82,6 +82,7 @@ pub fn run() {
             commands::plugin::list_plugins,
             commands::plugin::notify_from_plugin,
             commands::plugin::open_plugin_root,
+            commands::plugin::plugin_http_request,
             commands::plugin::read_plugin_entry,
             commands::plugin::read_plugin_package_file,
             commands::plugin::write_plugin_log,

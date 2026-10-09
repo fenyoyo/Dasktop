@@ -5,7 +5,7 @@
 
 use tauri::AppHandle;
 
-use crate::domain::plugin::PluginScanResult;
+use crate::domain::plugin::{PluginHttpRequest, PluginHttpResponse, PluginScanResult};
 use crate::services::plugin;
 
 /// 扫描插件根目录，返回全部插件包的清单与解析失败原因。
@@ -66,6 +66,18 @@ pub fn notify_from_plugin(
     message: String,
 ) -> Result<(), String> {
     plugin::notify_from_plugin(&app, &plugin_id, &title, &message)
+}
+
+/// 代表插件发起 HTTP 请求，对应 `net:request` 能力。
+///
+/// 刻意声明为异步：请求耗时完全取决于远端，同步命令会让整条 IPC 通道一起等待。
+#[tauri::command]
+pub async fn plugin_http_request(
+    app: AppHandle,
+    plugin_id: String,
+    request: PluginHttpRequest,
+) -> Result<PluginHttpResponse, String> {
+    plugin::http_request(&app, &plugin_id, request).await
 }
 
 /// 用系统资源管理器打开插件根目录，供用户手工安装插件包。
