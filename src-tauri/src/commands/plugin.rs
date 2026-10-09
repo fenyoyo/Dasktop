@@ -1,7 +1,12 @@
 //! 插件命令层。
 //!
-//! 只做 IPC 参数接收与转发，命令本身不做权限判断：权限门控由前端受控上下文负责，
-//! 这样新增能力时后端只需暴露命令、前端只需加一条权限映射，两边不会各维护一套判断。
+//! 只做 IPC 参数接收与转发，命令本身不做权限判断。
+//!
+//! 需要留意：下面这几条能力命令（`read_plugin_package_file` / `write_plugin_package_file` /
+//! `write_plugin_log` / `notify_from_plugin` / `plugin_http_request`）当前**没有前端调用方**。
+//! 插件界面是插件窗口里的普通网页，而插件窗口刻意不在 capabilities 白名单内，因此它
+//! 无法 invoke 任何命令。保留这些能力是为了下一步的受控桥能直接复用——宿主会把一份
+//! 经权限校验的能力对象注入插件页面，权限判定的落点届时仍在宿主这一侧。
 
 use tauri::AppHandle;
 
@@ -16,13 +21,14 @@ pub fn list_plugins(app: AppHandle) -> Result<PluginScanResult, String> {
     plugin::scan_plugin_packages(&app)
 }
 
-/// 读取指定插件的入口源码。
+/// 返回插件页面资源的 URL 前缀（形如 `http://plugin.localhost`）。
 ///
-/// 前端拿到源码后用 Blob URL 包装成 ESM 模块再动态导入，因此这里返回的是原始文本，
-/// 而不是可执行对象——宿主不替插件做任何代码转换。
+/// 平台差异必须由后端判断：WebView 在 Windows 上把自定义协议映射成
+/// `http://<scheme>.localhost`，其它平台才是 `<scheme>://localhost`。前端拿到前缀后
+/// 再拼 `/<插件id>/<相对路径>`。
 #[tauri::command]
-pub fn read_plugin_entry(app: AppHandle, plugin_id: String) -> Result<String, String> {
-    plugin::read_plugin_entry(&app, &plugin_id)
+pub fn plugin_asset_base_url() -> String {
+    plugin::asset_base_url()
 }
 
 /// 读取插件包内文本文件，对应 `fs:read` 能力。

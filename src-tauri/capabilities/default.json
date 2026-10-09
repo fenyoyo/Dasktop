@@ -1,9 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the settings window, runtime Box windows and the plugin host window",
-  "windows": ["main", "box_*", "box_menu", "drag_preview", "plugin_host"],
-  "webviews": ["main", "box_*", "box_menu", "drag_preview", "plugin_host"],
+  "description": "Capability for the settings window and runtime Box windows. Plugin windows are deliberately excluded: they load pages written by third parties, and WebView treats http://plugin.localhost as a local origin, so granting them any permission would let plugin code invoke host commands directly and bypass the permission gate.",
+  "windows": ["main", "box_*", "box_menu", "drag_preview"],
+  "webviews": ["main", "box_*", "box_menu", "drag_preview"],
   "permissions": [
     "core:default",
     "core:event:allow-emit",

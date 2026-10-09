@@ -1,7 +1,7 @@
 {
   "id": "http-console",
   "name": "HTTP 控制台",
-  "version": "0.1.0",
-  "entry": "index.js",
-  "permissions": ["fs:read", "fs:write", "log:write", "net:request", "ui:panel"]
+  "version": "0.2.0",
+  "entry": "index.html",
+  "permissions": []
 }

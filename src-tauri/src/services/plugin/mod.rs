@@ -3,9 +3,13 @@
 //! 负责三件事：把「应用数据目录」翻译成插件根目录、把基础设施的包内文件操作包装成
 //! 面向插件 id 的用例、把宿主通知落到 Tauri 事件上。
 //!
-//! 这里不做权限判断：权限门控由前端上下文层负责，命令层与服务层都按「调用方已授权」
-//! 的前提工作。这条边界的代价是后端命令可被直接调用，收益是宿主能力扩展只需在前端加
-//! 一行映射；当前版本接受该权衡，隔离方案见 `docs/plugin-package-framework.md` 的局限章节。
+//! 插件界面是插件作者自己写的网页，宿主通过 `plugin` 自定义协议把这些文件喂给插件
+//! 窗口（见 [`protocol`]），因此这里没有「加载插件代码」这一步——宿主从不执行插件
+//! 的逻辑，只负责把它的页面交出去。
+
+mod protocol;
+
+pub use protocol::handle_plugin_asset_request;
 
 use std::path::PathBuf;
 
@@ -14,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::plugin::{
     PluginHttpRequest, PluginHttpResponse, PluginScanResult, PLUGIN_LOG_DIR_NAME,
-    PLUGIN_NOTIFICATION_EVENT, PLUGIN_ROOT_DIR_NAME,
+    PLUGIN_NOTIFICATION_EVENT, PLUGIN_PROTOCOL_SCHEME, PLUGIN_ROOT_DIR_NAME,
 };
 use crate::infrastructure::filesystem::{plugin_log, plugin_package};
 use crate::infrastructure::http;
@@ -45,12 +49,17 @@ pub fn scan_plugin_packages(app: &AppHandle) -> Result<PluginScanResult, String>
     plugin_package::scan_packages(&root)
 }
 
-/// 读取插件入口源码，交由前端包装成模块后执行。
-pub fn read_plugin_entry(app: &AppHandle, plugin_id: &str) -> Result<String, String> {
-    let package_dir = resolve_package_dir(app, plugin_id)?;
-    let manifest = plugin_package::read_manifest(&package_dir)?;
-
-    plugin_package::read_entry_source(&package_dir, &manifest)
+/// 插件页面资源的 URL 前缀，按平台给出。
+///
+/// WebView 对自定义协议的寻址方式并不跨平台一致：Windows（WebView2）与 Android 把它
+/// 映射成 `http://<scheme>.localhost`，其余平台是 `<scheme>://localhost`。前端据此拼接
+/// `/<插件id>/<相对路径>`，所以这条平台判断只放在这里一处，前端不重复实现一遍。
+pub fn asset_base_url() -> String {
+    if cfg!(any(windows, target_os = "android")) {
+        format!("http://{PLUGIN_PROTOCOL_SCHEME}.localhost")
+    } else {
+        format!("{PLUGIN_PROTOCOL_SCHEME}://localhost")
+    }
 }
 
 /// 读取插件包内文本文件，对应 `fs:read` 能力。

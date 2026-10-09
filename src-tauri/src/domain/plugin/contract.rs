@@ -15,14 +15,26 @@ pub const PLUGIN_MANIFEST_FILE_NAME: &str = "plugin.json";
 /// 不应污染插件作者可见的文件空间，否则插件扫描包内资源时会读到宿主日志。
 pub const PLUGIN_LOG_DIR_NAME: &str = "plugin-logs";
 
-/// 入口源码读取上限。
+/// 插件页面资源读取上限，单位为字节。
 ///
-/// 插件入口是需要被浏览器逐行解析的 ESM 源码，超过该体积基本是把打包产物放错了位置，
-/// 直接拒绝读取比让 WebView 卡在上百万行脚本里更安全。
-pub const PLUGIN_ENTRY_MAX_BYTES: u64 = 2 * 1024 * 1024;
+/// 插件页面是完全由作者掌控的网页，除了 HTML 还会带上它自己的脚本、样式与图片。
+/// 上限比 `fs:read` 的文本读取更宽，但仍必须有：协议处理器会把整个文件读进内存
+/// 再交给 WebView，一次超大资源就能把内存打满。
+pub const PLUGIN_ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 /// 插件包内普通数据文件读取上限，单位为字节。
 pub const PLUGIN_DATA_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// 插件页面资源协议名。
+///
+/// 前端**不能**把协议写死成 `plugin://`：WebView 对自定义协议的寻址方式在各平台不同，
+/// Windows（WebView2）映射为 `http://plugin.localhost/<path>`，macOS / Linux 则是
+/// `plugin://localhost/<path>`。前缀一律由 `services::plugin::asset_base_url` 按平台给出。
+///
+/// URL 还必须写成 `/<插件id>/<相对路径>` 的**多段**形式，不能把整串路径编码成单段
+/// （`encodeURIComponent` 会连 `/` 一起编码）：页面里的相对链接 `./settings.html`
+/// 是相对当前路径的目录解析的，单段路径会让它丢掉插件 id，协议处理器就再也定位不到包。
+pub const PLUGIN_PROTOCOL_SCHEME: &str = "plugin";
 
 /// 单个插件日志文件的体积上限，超过后整体截断重写。
 ///

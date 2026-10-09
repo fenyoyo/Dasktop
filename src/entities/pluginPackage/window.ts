@@ -1,110 +1,140 @@
-import { emit } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { PLUGIN_HOST_SWITCH_EVENT } from "@/shared/ipc/pluginPackage";
+import { resolvePluginPageUrl } from "./api";
 
 /**
- * 插件宿主窗口。
+ * 插件窗口。
  *
- * 单窗口承载所有插件：切换插件时只替换内容，而不是为每个插件各开一个窗口。
- * 这与实际使用方式相符——用户同一时刻只会看一个插件界面——也避免窗口数量
- * 随已安装插件数线性增长。
+ * 每个插件一个窗口，标签形如 `plugin_<插件id>`。页面模式下插件就是一个网页，容器用
+ * 「一个插件一个窗口」而不是「一个窗口换内容」：省掉跨窗口通知它换页面的那套事件握手，
+ * 每个插件的页面状态也天然独立，切回来不会丢。
+ *
+ * 这些窗口**刻意不出现在 capabilities 白名单里**。Windows 上 `http://plugin.localhost`
+ * 会被判定为「本机来源」（见 tauri 的 `is_local_url`），一旦给它授权，插件页面就能直接
+ * invoke 宿主命令，能力门控等于不存在。不给授权时它连 `__TAURI_INTERNALS__` 都调不动，
+ * 是一个彻底的普通网页。
  */
 
-/** 插件宿主窗口的标签，同时是 capabilities 白名单里的标识。 */
-export const PLUGIN_HOST_WINDOW_LABEL = "plugin_host";
+/**
+ * 插件窗口标签前缀。
+ */
+export const PLUGIN_WINDOW_LABEL_PREFIX = "plugin_";
 
-/** 插件宿主窗口的默认尺寸与下限。 */
-const PLUGIN_HOST_WINDOW_SIZE = {
-  height: 560,
-  minHeight: 320,
-  minWidth: 320,
-  width: 420,
+/**
+ * 插件窗口的默认尺寸与下限。
+ *
+ * 比原来的界面窗口大一圈：插件页面是网页，作者可能在里面排布多列内容，
+ * 太窄会逼着他们为一个具体尺寸做适配。
+ */
+const PLUGIN_WINDOW_SIZE = {
+  height: 640,
+  minHeight: 360,
+  minWidth: 420,
+  width: 560,
 };
 
 /**
- * 创建中的窗口 Promise，用于合并并发打开请求。
+ * 创建中的窗口 Promise，按窗口标签合并并发打开请求。
  *
- * 同一帧内两侧同时点「打开界面」时，没有这层共享会各建一次同名窗口，
- * 后建的必然失败。
+ * 同一帧内重复点击「打开」时，没有这层合并会各建一次同名窗口，后建的必然失败。
  */
-let pendingWindow: Promise<WebviewWindow> | null = null;
+const pendingWindows = new Map<string, Promise<WebviewWindow>>();
 
 /**
- * 打开插件宿主窗口并切到指定插件。
- *
- * 窗口已存在时走事件通知它换插件，而不是重新创建：事件路径与 URL 路径分开的原因
- * 见 `PLUGIN_HOST_SWITCH_EVENT` 的注释。
+ * 取插件对应的窗口标签。
  */
-export async function openPluginHostWindow(pluginId: string, pluginName: string): Promise<void> {
-  const existing = await WebviewWindow.getByLabel(PLUGIN_HOST_WINDOW_LABEL);
-  const hostWindow = await ensurePluginHostWindow(pluginId, pluginName);
+export function pluginWindowLabel(pluginId: string): string {
+  return `${PLUGIN_WINDOW_LABEL_PREFIX}${pluginId}`;
+}
+
+/**
+ * 打开插件的界面窗口；窗口已存在时直接聚焦，不重新创建。
+ *
+ * 已存在时不重新导航：用户在插件页面里可能已经翻到第二页，重载会把他弹回入口页面。
+ */
+export async function openPluginWindow(
+  pluginId: string,
+  pluginName: string,
+  entry: string,
+): Promise<void> {
+  const label = pluginWindowLabel(pluginId);
+  const existing = await WebviewWindow.getByLabel(label);
 
   if (existing) {
-    await hostWindow.setTitle(resolveWindowTitle(pluginName));
-    await emit(PLUGIN_HOST_SWITCH_EVENT, pluginId);
+    await existing.show();
+    await existing.setFocus();
+
+    return;
   }
+
+  const hostWindow = await ensurePluginWindow(label, pluginId, pluginName, entry);
 
   await hostWindow.show();
   await hostWindow.setFocus();
 }
 
 /**
- * 关闭插件宿主窗口。
+ * 关闭插件窗口。
  */
-export async function closePluginHostWindow(): Promise<void> {
-  const existing = await WebviewWindow.getByLabel(PLUGIN_HOST_WINDOW_LABEL);
+export async function closePluginWindow(pluginId: string): Promise<void> {
+  const existing = await WebviewWindow.getByLabel(pluginWindowLabel(pluginId));
   await existing?.close();
 }
 
 /**
- * 取回或创建插件宿主窗口。
+ * 取回或创建插件窗口。
+ *
+ * 用 Map 而不是单个 Promise：多个插件可以同时被打开，它们之间没有理由互相阻塞。
  */
-async function ensurePluginHostWindow(
+async function ensurePluginWindow(
+  label: string,
   pluginId: string,
   pluginName: string,
+  entry: string,
 ): Promise<WebviewWindow> {
-  const existing = await WebviewWindow.getByLabel(PLUGIN_HOST_WINDOW_LABEL);
-  if (existing) {
-    return existing;
+  const pending = pendingWindows.get(label);
+  if (pending) {
+    return pending;
   }
 
-  if (!pendingWindow) {
-    pendingWindow = createPluginHostWindow(pluginId, pluginName)
-      .catch(async (error) => {
-        // 并发创建时另一侧可能已抢先建成，兜底取回而不是把「已存在」当成失败抛给用户。
-        const created = await WebviewWindow.getByLabel(PLUGIN_HOST_WINDOW_LABEL);
-        if (created) {
-          return created;
-        }
+  const created = createPluginWindow(label, pluginId, pluginName, entry)
+    .catch(async (error) => {
+      // 并发创建时另一侧可能已抢先建成，兜底取回而不是把「已存在」当成失败抛给用户。
+      const existing = await WebviewWindow.getByLabel(label);
+      if (existing) {
+        return existing;
+      }
 
-        throw error;
-      })
-      .finally(() => {
-        pendingWindow = null;
-      });
-  }
+      throw error;
+    })
+    .finally(() => {
+      pendingWindows.delete(label);
+    });
 
-  return pendingWindow;
+  pendingWindows.set(label, created);
+
+  return created;
 }
 
 /**
- * 创建插件宿主窗口，插件身份通过 URL query 传入。
+ * 创建插件窗口，指向插件的入口页面。
  */
-async function createPluginHostWindow(
+async function createPluginWindow(
+  label: string,
   pluginId: string,
   pluginName: string,
+  entry: string,
 ): Promise<WebviewWindow> {
-  const searchParams = new URLSearchParams({ pluginHost: pluginId });
+  const url = await resolvePluginPageUrl(pluginId, entry);
 
   return new Promise<WebviewWindow>((resolve, reject) => {
-    const createdWindow = new WebviewWindow(PLUGIN_HOST_WINDOW_LABEL, {
-      height: PLUGIN_HOST_WINDOW_SIZE.height,
-      minHeight: PLUGIN_HOST_WINDOW_SIZE.minHeight,
-      minWidth: PLUGIN_HOST_WINDOW_SIZE.minWidth,
+    const createdWindow = new WebviewWindow(label, {
+      height: PLUGIN_WINDOW_SIZE.height,
+      minHeight: PLUGIN_WINDOW_SIZE.minHeight,
+      minWidth: PLUGIN_WINDOW_SIZE.minWidth,
       resizable: true,
       title: resolveWindowTitle(pluginName),
-      url: `/?${searchParams.toString()}`,
-      width: PLUGIN_HOST_WINDOW_SIZE.width,
+      url,
+      width: PLUGIN_WINDOW_SIZE.width,
     });
 
     void createdWindow.once("tauri://created", () => resolve(createdWindow));

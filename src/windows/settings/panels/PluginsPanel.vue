@@ -11,10 +11,10 @@ import SettingRow from "../components/SettingRow.vue";
 import SettingSection from "../components/SettingSection.vue";
 
 /**
- * 插件面板展示插件安装位置、加载结果、权限声明与最近通知。
+ * 插件面板展示插件安装位置、可用状态、权限声明与最近通知。
  *
- * 面板自身不触发任何加载：加载编排由设置页根组件负责，
- * 这样用户不进入本页签时插件依然会被激活。
+ * 面板自身不触发扫描：扫描编排由设置页根组件负责，
+ * 这样用户不进入本页签时插件列表也已经是就绪的。
  */
 defineProps<{
   panelWidth: string;
@@ -22,8 +22,8 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  openPage: [pluginId: string, pluginName: string, entry: string];
   openRoot: [];
-  openUi: [pluginId: string, pluginName: string];
   reload: [];
 }>();
 
@@ -49,23 +49,19 @@ const PERMISSION_SUMMARIES = new Map<string, string>(
 
 /**
  * 状态到展示文案的映射。
+ *
+ * 只有「可用 / 不可用」两态：页面模式下插件不需要被激活，扫描通过就随时能打开。
+ * 用「就绪」而不用「已加载」，是为了不让人以为宿主已经把插件代码跑起来了——
+ * 它只是登记了这个包，真正加载页面的是插件窗口。
  */
 const STATUS_LABELS: Record<PluginRuntimeRecord["status"], string> = {
-  failed: "加载失败",
-  loaded: "已加载",
-  unloaded: "已卸载",
+  failed: "不可用",
+  ready: "可用",
 };
 
-/**
- * 状态到标签样式的映射，刻意区分「失败」与「已卸载」，避免用户把正常卸载当成故障。
- */
 const STATUS_CLASSES: Record<PluginRuntimeRecord["status"], string> = {
-  failed:
-    "bg-[#fff1f1] text-[#b52a2a] dark:bg-[#3a2226] dark:text-[#ff9c9c]",
-  loaded:
-    "bg-[#eef8f0] text-[#1f7a44] dark:bg-[#1d3025] dark:text-[#7ddba5]",
-  unloaded:
-    "bg-[#f1f2f5] text-[#6a7180] dark:bg-[#242730] dark:text-[#9ca0aa]",
+  failed: "bg-[#fff1f1] text-[#b52a2a] dark:bg-[#3a2226] dark:text-[#ff9c9c]",
+  ready: "bg-[#eef8f0] text-[#1f7a44] dark:bg-[#1d3025] dark:text-[#7ddba5]",
 };
 
 /**
@@ -89,7 +85,7 @@ function describePermission(permission: PluginPermission | string): string {
 
 <template>
   <SettingSection
-    description="插件包目录、加载状态与能力授权"
+    description="插件包目录、可用状态与能力声明"
     :panel-width="panelWidth"
     title="插件"
   >
@@ -118,13 +114,13 @@ function describePermission(permission: PluginPermission | string): string {
             @click="emit('reload')"
           >
             <RefreshCw :size="15" />
-            {{ runtime.loading ? "加载中" : "重新加载" }}
+            {{ runtime.loading ? "扫描中" : "重新加载" }}
           </button>
         </div>
       </SettingRow>
 
       <SettingRow
-        :description="`每个子目录是一个插件包，需包含 plugin.json 与入口源码；共 ${runtime.records.length} 个`"
+        :description="`每个子目录是一个插件包，需包含 plugin.json 与入口页面；共 ${runtime.records.length} 个`"
         :divided="runtime.records.length > 0"
         title="已安装插件"
       />
@@ -141,9 +137,9 @@ function describePermission(permission: PluginPermission | string): string {
             <span>{{ record.id }}</span>
             <span aria-hidden="true">·</span>
             <span>v{{ record.version || "未知" }}</span>
-            <template v-if="record.loadedAt > 0">
+            <template v-if="record.entry">
               <span aria-hidden="true">·</span>
-              <span>{{ formatNotificationTime(record.loadedAt) }} 激活</span>
+              <span>{{ record.entry }}</span>
             </template>
           </p>
 
@@ -170,7 +166,7 @@ function describePermission(permission: PluginPermission | string): string {
             v-for="permission in record.unknownPermissions"
             :key="permission"
             class="inline-flex items-center gap-1 rounded-full border border-[#f0c7c7] px-2 py-[3px] text-[11px] font-medium text-[#b52a2a] dark:border-[#5b2a2d] dark:text-[#ff9c9c]"
-            title="宿主不认识该权限，插件已被拒绝加载"
+            title="宿主不认识该权限，插件已被标记为不可用"
           >
             <ShieldAlert :size="12" />
             {{ permission }}
@@ -184,19 +180,16 @@ function describePermission(permission: PluginPermission | string): string {
           </span>
 
           <button
-            v-if="record.permissions.includes('ui:panel')"
             :class="CARD_ACTION_CLASS"
-            :disabled="record.status !== 'loaded'"
+            :disabled="record.status !== 'ready'"
             :title="
-              record.status === 'loaded'
-                ? '打开插件界面窗口'
-                : '插件未成功加载，无法打开界面'
+              record.status === 'ready' ? '打开插件页面' : (record.error ?? '插件不可用')
             "
             type="button"
-            @click="emit('openUi', record.id, record.name)"
+            @click="emit('openPage', record.id, record.name, record.entry)"
           >
             <AppWindow :size="12" />
-            界面
+            打开
           </button>
         </div>
       </SettingRow>
@@ -216,15 +209,15 @@ function describePermission(permission: PluginPermission | string): string {
       v-if="runtime.error"
       class="mt-4 rounded-[8px] border border-[#f0c7c7] bg-[#fff6f6] px-4 py-3 text-[13px] text-[#9f1d1d] dark:border-[#5b2a2d] dark:bg-[#281619] dark:text-[#ffb4b4]"
     >
-      插件加载失败：{{ runtime.error }}
+      插件扫描失败：{{ runtime.error }}
     </div>
 
     <SettingGroup class="mt-4">
       <SettingRow
         :description="
           runtime.notifications.length > 0
-            ? `插件通过 ui:notify 发送，最多保留最近 ${runtime.notifications.length} 条`
-            : '插件调用 ui:notify 后，通知会显示在这里并同时写入插件日志'"
+            ? `插件通过宿主能力发送，最多保留最近 ${runtime.notifications.length} 条`
+            : '插件通过宿主能力发送的通知会显示在这里，并同时写入插件日志'"
         :divided="runtime.notifications.length > 0"
         title="最近通知"
       />

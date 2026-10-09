@@ -28,6 +28,13 @@ pub fn run() {
             Some(vec![services::app::lifecycle::AUTOSTART_LAUNCH_ARGUMENT]),
         ))
         .plugin(tauri_plugin_sql::Builder::default().build())
+        // 插件页面资源走自定义协议：插件界面是作者自己写的网页，宿主把插件包目录
+        // 映射成 `plugin` 协议供插件窗口加载。URL 前缀由 `services::plugin::asset_base_url`
+        // 按平台给出（Windows 上是 `http://plugin.localhost`）。
+        .register_uri_scheme_protocol(
+            domain::plugin::PLUGIN_PROTOCOL_SCHEME,
+            |ctx, request| services::plugin::handle_plugin_asset_request(ctx.app_handle(), &request),
+        )
         .setup(move |app| {
             app.manage(single_instance_guard);
             infrastructure::windows::single_instance::start_show_settings_listener(
@@ -82,8 +89,8 @@ pub fn run() {
             commands::plugin::list_plugins,
             commands::plugin::notify_from_plugin,
             commands::plugin::open_plugin_root,
+            commands::plugin::plugin_asset_base_url,
             commands::plugin::plugin_http_request,
-            commands::plugin::read_plugin_entry,
             commands::plugin::read_plugin_package_file,
             commands::plugin::write_plugin_log,
             commands::plugin::write_plugin_package_file,

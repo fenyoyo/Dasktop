@@ -6,8 +6,8 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::domain::plugin::{
-    PluginManifest, PluginPackageRecord, PluginScanResult, SamplePackage, PLUGIN_DATA_MAX_BYTES,
-    PLUGIN_ENTRY_MAX_BYTES, PLUGIN_ID_MAX_LENGTH, PLUGIN_MANIFEST_FILE_NAME, SAMPLE_PACKAGES,
+    PluginManifest, PluginPackageRecord, PluginScanResult, SamplePackage, PLUGIN_ASSET_MAX_BYTES,
+    PLUGIN_DATA_MAX_BYTES, PLUGIN_ID_MAX_LENGTH, PLUGIN_MANIFEST_FILE_NAME, SAMPLE_PACKAGES,
 };
 
 /// 目录扫描时跳过的宿主自用目录首字符集合。
@@ -118,11 +118,14 @@ fn write_sample_package(root: &Path, package: &SamplePackage) -> Result<(), Stri
     )
     .map_err(|error| format!("无法写入示例插件 {} 的清单：{error}", package.package_id))?;
 
-    std::fs::write(
-        package_dir.join(package.entry_file_name),
-        package.entry_source,
-    )
-    .map_err(|error| format!("无法写入示例插件 {} 的入口：{error}", package.package_id))?;
+    for file in package.files {
+        std::fs::write(package_dir.join(file.file_name), file.source).map_err(|error| {
+            format!(
+                "无法写入示例插件 {} 的 {}：{error}",
+                package.package_id, file.file_name
+            )
+        })?;
+    }
 
     Ok(())
 }
@@ -156,9 +159,29 @@ pub fn is_valid_plugin_id(plugin_id: &str) -> bool {
         })
 }
 
-/// 读取插件入口源码，供前端包装成 Blob 模块后动态导入。
-pub fn read_entry_source(package_dir: &Path, manifest: &PluginManifest) -> Result<String, String> {
-    read_text_file(package_dir, &manifest.entry, PLUGIN_ENTRY_MAX_BYTES)
+/// 读取插件包内的页面资源，供插件页面协议处理器使用。
+///
+/// 与 [`read_package_file`] 的关键区别是**按字节读取**：插件页面会引用图片、字体、
+/// wasm 这类非文本资源，用 `read_to_string` 碰到任何非 UTF-8 字节都会直接失败。
+/// 路径沙箱与 `fs:read` 共用同一条校验，页面资源同样不能逃出插件包目录。
+pub fn read_package_asset(package_dir: &Path, relative_path: &str) -> Result<Vec<u8>, String> {
+    let path = resolve_sandboxed_path(package_dir, relative_path)?;
+
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("插件资源不可读 {relative_path}：{error}"))?;
+
+    if !metadata.is_file() {
+        return Err(format!("插件资源路径不是文件：{relative_path}"));
+    }
+
+    if metadata.len() > PLUGIN_ASSET_MAX_BYTES {
+        return Err(format!(
+            "插件资源超过 {PLUGIN_ASSET_MAX_BYTES} 字节上限：{relative_path}（实际 {} 字节）",
+            metadata.len()
+        ));
+    }
+
+    std::fs::read(&path).map_err(|error| format!("插件资源读取失败 {relative_path}：{error}"))
 }
 
 /// 读取插件包内文本文件，供 `fs:read` 能力使用。
@@ -284,6 +307,28 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
         };
     }
 
+    // 入口页面必须真实存在。拦在扫描期而不是等用户点开插件窗口：那时只会看到一片
+    // 空白，而这里能直接说清是哪个文件缺了。
+    match resolve_sandboxed_path(package_dir, &manifest.entry) {
+        Ok(entry_path) if entry_path.is_file() => {}
+        Ok(_) => {
+            return PluginPackageRecord {
+                id: directory_name.to_string(),
+                directory_path,
+                manifest: None,
+                error: Some(format!("入口页面不存在：{}", manifest.entry)),
+            }
+        }
+        Err(message) => {
+            return PluginPackageRecord {
+                id: directory_name.to_string(),
+                directory_path,
+                manifest: None,
+                error: Some(format!("入口页面路径非法：{message}")),
+            }
+        }
+    }
+
     PluginPackageRecord {
         id: directory_name.to_string(),
         directory_path,
@@ -405,12 +450,15 @@ mod tests {
         std::fs::write(
             package_dir.join(PLUGIN_MANIFEST_FILE_NAME),
             format!(
-                r#"{{"id":"{manifest_id}","name":"测试插件","version":"1.0.0","entry":"index.js","permissions":[]}}"#
+                r#"{{"id":"{manifest_id}","name":"测试插件","version":"1.0.0","entry":"index.html","permissions":[]}}"#
             ),
         )
         .expect("清单应可写入");
-        std::fs::write(package_dir.join("index.js"), "export function activate() {}")
-            .expect("入口应可写入");
+        std::fs::write(
+            package_dir.join("index.html"),
+            "<!doctype html><title>测试</title>",
+        )
+        .expect("入口页面应可写入");
 
         package_dir
     }
@@ -463,12 +511,38 @@ mod tests {
                 "内嵌清单 entry 必须与播种时写入的文件名一致"
             );
 
-            // 播种出的包必须能走通入口读取链路，否则加载器会在读取源码这一步失败。
+            // 播种出的每个页面都必须能走通「协议处理器读资源」这条链路：这条链路只在
+            // 插件窗口打开时才被触发，坏掉的话要等用户点开界面才发现是一片空白。
             let package_dir = fixture.root.join(package.package_id);
-            let source = read_entry_source(&package_dir, manifest).expect("示例包入口应可读取");
+
+            for file in package.files {
+                let contents = read_package_asset(&package_dir, file.file_name).unwrap_or_else(
+                    |error| {
+                        panic!(
+                            "示例包 {} 的 {} 应可读取：{error}",
+                            package.package_id, file.file_name
+                        )
+                    },
+                );
+
+                assert_eq!(
+                    contents.as_slice(),
+                    file.source.as_bytes(),
+                    "示例包 {} 的 {} 落盘内容与内嵌源码不一致",
+                    package.package_id,
+                    file.file_name
+                );
+            }
+
+            // 入口必须在 files 列表里，否则打开插件窗口会直接 404。
+            let entry = read_package_asset(&package_dir, &manifest.entry).unwrap_or_else(|error| {
+                panic!("示例包 {} 的入口页面应可读取：{error}", package.package_id)
+            });
+            let markup = String::from_utf8_lossy(&entry).to_ascii_lowercase();
+
             assert!(
-                source.contains("export async function activate"),
-                "示例包 {} 入口应导出 activate",
+                markup.contains("<!doctype") || markup.contains("<html"),
+                "示例包 {} 的入口应是一份 HTML 页面",
                 package.package_id
             );
         }
@@ -490,6 +564,18 @@ mod tests {
                 manifest.entry, package.entry_file_name,
                 "示例包 {} 的清单 entry 与 entry_file_name 不一致",
                 package.package_id
+            );
+
+            // 入口必须出现在 files 列表里：清单写对了但忘了加进播种列表，扫描完全正常
+            // （清单里那个字段没人核对），只有用户点开插件窗口时才会 404。
+            assert!(
+                package
+                    .files
+                    .iter()
+                    .any(|file| file.file_name == manifest.entry),
+                "示例包 {} 的入口 {} 不在 files 列表里，播种后不会落盘",
+                package.package_id,
+                manifest.entry
             );
         }
     }
@@ -526,6 +612,36 @@ mod tests {
                 .unwrap_or_default()
                 .contains(PLUGIN_MANIFEST_FILE_NAME),
             "错误信息应指出缺少清单文件"
+        );
+    }
+
+    /// 清单声明的入口页面必须真实存在。
+    ///
+    /// 这条校验的价值在于「失败发生在哪」：少了它，包能正常扫描、正常显示在设置页里，
+    /// 直到用户点开插件窗口才看到一片空白，而那时很难联想到是清单里文件名写错了。
+    #[test]
+    fn reports_missing_entry_page_as_package_error() {
+        let fixture = TempPackage::new("missing-entry");
+        let package_dir = fixture.root.join("no-entry");
+        std::fs::create_dir_all(&package_dir).expect("目录应可创建");
+        std::fs::write(
+            package_dir.join(PLUGIN_MANIFEST_FILE_NAME),
+            r#"{"id":"no-entry","name":"缺入口","version":"1.0.0","entry":"index.html"}"#,
+        )
+        .expect("清单应可写入");
+
+        let scan = scan_packages(&fixture.root).expect("扫描应成功");
+        let record = &scan.packages[0];
+
+        assert!(record.manifest.is_none(), "入口缺失时不应给出清单");
+        assert!(
+            record
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("入口页面不存在"),
+            "错误信息应指出入口页面缺失：{:?}",
+            record.error
         );
     }
 
@@ -595,6 +711,19 @@ mod tests {
         let contents = read_package_file(&package_dir, "data/state.json").expect("包内读取应成功");
 
         assert_eq!(contents, "{\"ok\":true}");
+    }
+
+    #[test]
+    fn rejects_package_asset_escape() {
+        let fixture = TempPackage::new("escape-asset");
+        let package_dir = fixture.package_dir();
+
+        for relative_path in ["../secret.html", "/etc/passwd", "a/../../b.html"] {
+            assert!(
+                read_package_asset(&package_dir, relative_path).is_err(),
+                "页面资源同样不能越出插件包目录：{relative_path}"
+            );
+        }
     }
 
     #[test]

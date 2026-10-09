@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hello Dasktop</title>
+    <style>
+      /*
+       * 这是一个完全由插件自己掌控的网页：结构、样式、脚本全部在插件包里，
+       * 宿主只负责把文件喂给 WebView，不参与任何渲染。
+       *
+       * 深浅色靠 `prefers-color-scheme` 跟随系统，而不是去问宿主要主题——
+       * 插件页面跑在自己的 WebView 里，跨窗口读不到宿主的主题状态。
+       */
+      :root {
+        color-scheme: light dark;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px;
+        font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #ffffff;
+        color: #0f172a;
+      }
+
+      h1 {
+        margin: 0 0 4px;
+        font-size: 18px;
+        font-weight: 600;
+      }
+
+      p {
+        margin: 0 0 16px;
+      }
+
+      .muted {
+        color: #6b7280;
+      }
+
+      .card {
+        border: 1px solid #e7e9ee;
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 12px;
+        background: #fbfcfd;
+      }
+
+      code {
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 12px;
+        background: rgba(127, 127, 127, 0.14);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+
+      button {
+        font: inherit;
+        border: 1px solid #d7dae1;
+        border-radius: 6px;
+        background: #ffffff;
+        color: inherit;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #f2f4f8;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #1b1d22;
+          color: #e6e8ee;
+        }
+
+        .muted {
+          color: #9aa3b2;
+        }
+
+        .card {
+          background: #22252c;
+          border-color: #31343d;
+        }
+
+        button {
+          background: #2a2e36;
+          border-color: #3a3e48;
+        }
+
+        button:hover {
+          background: #333843;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Hello Dasktop</h1>
+    <p class="muted">最小的插件页面示例：一个 <code>plugin.json</code> 加一个 <code>index.html</code>。</p>
+
+    <div class="card">
+      <strong>你看到的一切都是这个 HTML 文件写出来的。</strong>
+      <p class="muted" style="margin: 8px 0 0">
+        宿主不拼界面、不塞样式，也不审查 DOM。它就是把这个文件当成一张网页打开——
+        跟浏览器打开本地文件没有区别。
+      </p>
+    </div>
+
+    <div class="card">
+      <p style="margin: 0 0 8px">页面里的脚本照常运行：</p>
+      <button id="counter" type="button">点我加一</button>
+    </div>
+
+    <p class="muted" id="note" style="margin: 0"></p>
+
+    <script>
+      // 插件页面有自己的完整 JS 环境：可以用标准 Web API，也可以引包内的其它文件。
+      let count = 0;
+      const button = document.getElementById("counter");
+
+      button.addEventListener("click", () => {
+        count += 1;
+        button.textContent = `点了 ${count} 次`;
+      });
+
+      // 所有插件页面共享同一个 origin，localStorage 是**共用**的。
+      // 自己存东西一定要加插件名前缀，否则会和别的插件互相覆盖。
+      const storageKey = "hello-dasktop:opened-at";
+      const openedAt = new Date().toLocaleTimeString("zh-CN");
+
+      localStorage.setItem(storageKey, openedAt);
+      document.getElementById("note").textContent = `本次打开于 ${openedAt}（已存进 localStorage）`;
+    </script>
+  </body>
+</html>

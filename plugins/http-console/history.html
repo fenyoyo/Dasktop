@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>请求历史</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+
+      body {
+        margin: 0;
+        padding: 20px;
+        font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #ffffff;
+        color: #0f172a;
+      }
+
+      h1 {
+        margin: 0 0 2px;
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .muted {
+        color: #6b7280;
+      }
+
+      ul {
+        margin: 14px 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      li {
+        display: flex;
+        gap: 10px;
+        padding: 8px 10px;
+        border: 1px solid #e7e9ee;
+        border-radius: 8px;
+        margin-bottom: 6px;
+        background: #fbfcfd;
+      }
+
+      .status {
+        flex-shrink: 0;
+        min-width: 36px;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        color: #6b7280;
+      }
+
+      .target {
+        word-break: break-all;
+      }
+
+      button {
+        font: inherit;
+        border: 1px solid #d7dae1;
+        border-radius: 6px;
+        background: #ffffff;
+        color: inherit;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #f2f4f8;
+      }
+
+      a {
+        color: #2f6bff;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #1b1d22;
+          color: #e6e8ee;
+        }
+
+        .muted,
+        .status {
+          color: #9aa3b2;
+        }
+
+        li {
+          background: #22252c;
+          border-color: #31343d;
+        }
+
+        button {
+          background: #2a2e36;
+          border-color: #3a3e48;
+        }
+
+        button:hover {
+          background: #333843;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>请求历史</h1>
+    <p class="muted" style="margin: 0 0 12px">
+      <a href="./index.html">← 返回控制台</a>
+    </p>
+
+    <ul id="list"></ul>
+
+    <button id="clear" type="button">清空历史</button>
+
+    <script>
+      /*
+       * 这是插件包里的第二个页面，跳转靠的就是一条普通的相对链接（见 index.html 顶部）。
+       * 宿主不参与页面间的导航——它只把 `index.html` 加载起来，之后走哪儿由插件自己决定。
+       *
+       * 两个页面共享同一个 localStorage（同一个 origin），所以 key 在这里也带着插件名前缀。
+       */
+      const HISTORY_KEY = "http-console:history";
+
+      const list = document.getElementById("list");
+      const history = readHistory();
+
+      if (history.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "muted";
+        empty.textContent = "还没有历史记录。";
+        list.appendChild(empty);
+      }
+
+      for (const entry of history) {
+        const item = document.createElement("li");
+
+        const status = document.createElement("span");
+        status.className = "status";
+        status.textContent = entry.status === 0 ? "失败" : String(entry.status);
+
+        const target = document.createElement("span");
+        target.className = "target";
+        target.textContent = entry.url;
+
+        item.append(status, target);
+        list.appendChild(item);
+      }
+
+      document.getElementById("clear").addEventListener("click", () => {
+        localStorage.removeItem(HISTORY_KEY);
+        list.innerHTML = "";
+
+        const empty = document.createElement("li");
+        empty.className = "muted";
+        empty.textContent = "还没有历史记录。";
+        list.appendChild(empty);
+      });
+
+      function readHistory() {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      }
+    </script>
+  </body>
+</html>

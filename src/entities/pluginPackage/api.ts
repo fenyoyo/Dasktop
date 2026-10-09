@@ -4,8 +4,11 @@ import type { PluginHttpRequest, PluginHttpResponse, PluginScanResult } from "./
 /**
  * 插件宿主命令的前端封装。
  *
- * 这一层只负责参数搬运，不做权限判断：权限门控统一由受控上下文承担，
- * 因此本模块刻意不导出给插件使用，只由加载器与宿主面板调用。
+ * 这一层只负责参数搬运与 URL 拼装，不做权限判断。
+ *
+ * 注意 `readPluginPackageFile` 及其后几个能力命令**当前没有调用方**：插件页面不在
+ * capabilities 白名单内，调不到任何命令。保留封装是为了宿主注入受控桥后能直接复用，
+ * 不必再回来补一遍参数搬运。
  */
 
 /**
@@ -19,24 +22,49 @@ export function listPlugins(): Promise<PluginScanResult> {
 }
 
 /**
- * 读取插件入口源码。
+ * 插件页面资源的 URL 前缀缓存。
  *
- * 返回原始文本而不是可执行对象：把源码变成模块是前端加载器的职责，
- * 宿主后端不参与任何代码转换。
+ * 前缀只由平台决定、进程内不会变，缓存一次可以省掉每次打开插件窗口的一趟 IPC。
+ * 失败时不写缓存，下次调用会重新尝试，而不是把一次失败固化成永久错误。
  */
-export function readPluginEntry(pluginId: string): Promise<string> {
-  return invoke<string>("read_plugin_entry", { pluginId });
+let assetBaseUrl: string | null = null;
+
+/**
+ * 拼出插件入口页面的完整地址。
+ *
+ * 前缀由后端给出（Windows 上是 `http://plugin.localhost`），因为 WebView 对自定义协议的
+ * 寻址方式跨平台不一致，这条判断只应该在 Rust 侧存在一份。
+ */
+export async function resolvePluginPageUrl(pluginId: string, entry: string): Promise<string> {
+  assetBaseUrl ??= await invoke<string>("plugin_asset_base_url");
+
+  return `${assetBaseUrl}/${encodeURIComponent(pluginId)}/${encodePagePath(entry)}`;
 }
 
 /**
- * 读取插件包内文本文件，路径相对插件包目录，越界访问由后端拒绝。
+ * 逐段编码页面路径。
+ *
+ * 刻意不用 `encodeURIComponent` 处理整串：它会把 `/` 一起编码成 `%2F`，把多段路径
+ * 压成一段。页面里的相对链接（`./history.html`）是相对当前路径的目录解析的，压成
+ * 一段之后它会丢掉插件 id，协议处理器就再也定位不到包目录。
+ */
+function encodePagePath(entry: string): string {
+  return entry
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map(encodeURIComponent)
+    .join("/");
+}
+
+/**
+ * 读取插件包内文本文件，对应 `fs:read` 能力。
  */
 export function readPluginPackageFile(pluginId: string, relativePath: string): Promise<string> {
   return invoke<string>("read_plugin_package_file", { pluginId, relativePath });
 }
 
 /**
- * 写入插件包内文本文件，路径相对插件包目录，越界写入由后端拒绝。
+ * 写入插件包内文本文件，对应 `fs:write` 能力。
  */
 export function writePluginPackageFile(
   pluginId: string,
@@ -62,6 +90,9 @@ export function notifyFromPlugin(pluginId: string, title: string, message: strin
 
 /**
  * 代表插件发起 HTTP 请求。后端会强制超时与响应体体积上限，并记录请求与结果状态。
+ *
+ * 与插件页面里直接用 `fetch` 的区别是不受同源策略约束：浏览器发起的请求需要目标接口
+ * 返回 CORS 头，而这条路径由宿主进程发起，没有这个限制。
  */
 export function requestFromPlugin(
   pluginId: string,
