@@ -1,0 +1,116 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>二维码工具</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!--
+      二维码工具：生成与解析两个标签页。
+      生成依赖 qrcode.js（UMD），解析依赖 jsQR.js（UMD）。
+      所有宿主能力走 window.dasktop；未注入时禁用相关按钮并给出提示。
+    -->
+    <header class="toolbar">
+      <h1>二维码工具</h1>
+      <nav class="tabs">
+        <button id="tab-generate" class="tab active" type="button">生成</button>
+        <button id="tab-scan" class="tab" type="button">解析</button>
+      </nav>
+    </header>
+
+    <main class="container">
+      <!-- 生成面板 -->
+      <section id="panel-generate" class="panel active">
+        <label class="field">
+          <span>内容</span>
+          <textarea
+            id="generate-input"
+            rows="4"
+            placeholder="输入文本、网址或任意字符串"
+            spellcheck="false"
+          ></textarea>
+        </label>
+
+        <div class="row">
+          <label class="field compact">
+            <span>纠错级别</span>
+            <select id="generate-level">
+              <option value="L">L（低）</option>
+              <option value="M" selected>M（中）</option>
+              <option value="Q">Q（较高）</option>
+              <option value="H">H（高）</option>
+            </select>
+          </label>
+
+          <label class="field compact">
+            <span>单元格大小</span>
+            <input id="generate-cell" type="number" min="2" max="20" value="6" />
+          </label>
+
+          <label class="field compact">
+            <span>边距</span>
+            <input id="generate-margin" type="number" min="0" max="10" value="2" />
+          </label>
+        </div>
+
+        <div class="actions prominent">
+          <button id="generate-btn" class="primary large" type="button">⚡ 生成二维码</button>
+          <button id="generate-copy-text" type="button">📋 复制内容</button>
+        </div>
+
+        <div class="result-area">
+          <canvas id="generate-canvas" width="0" height="0"></canvas>
+          <div id="generate-placeholder" class="placeholder">二维码将显示在这里</div>
+        </div>
+
+        <div class="actions secondary">
+          <button id="generate-copy-image" type="button" disabled>🖼️ 复制图片</button>
+          <button id="generate-save" type="button" disabled>💾 保存图片</button>
+        </div>
+      </section>
+
+      <!-- 解析面板 -->
+      <section id="panel-scan" class="panel">
+        <div
+          id="scan-drop"
+          class="drop-zone"
+          tabindex="0"
+          role="button"
+          aria-label="拖放图片、粘贴或点击选择文件"
+        >
+          <p>拖放二维码图片到这里</p>
+          <p class="muted">或按 Ctrl+V 粘贴 / 点击选择文件</p>
+          <input id="scan-file" type="file" accept="image/*" hidden />
+        </div>
+
+        <div class="actions prominent">
+          <button id="scan-paste" class="primary" type="button">📋 从剪贴板粘贴</button>
+          <button id="scan-select" class="primary" type="button">🖼️ 选择图片文件</button>
+        </div>
+
+        <div class="preview-area">
+          <img id="scan-preview" alt="待解析的二维码" hidden />
+          <span id="scan-preview-hint" class="placeholder">未选择图片</span>
+        </div>
+
+        <label class="field">
+          <span>解析结果</span>
+          <textarea id="scan-result" rows="4" readonly placeholder="解析结果会显示在这里"></textarea>
+        </label>
+
+        <div class="actions secondary">
+          <button id="scan-copy" type="button" disabled>📋 复制结果</button>
+          <button id="scan-clear" type="button">🗑️ 清空</button>
+        </div>
+      </section>
+    </main>
+
+    <footer id="status" class="status muted">就绪。</footer>
+
+    <script src="./qrcode.js"></script>
+    <script src="./jsQR.js"></script>
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

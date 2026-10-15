@@ -1,0 +1,392 @@
+/*
+ * 图片 Base64 转换样式。
+ * 复用二维码工具的设计语言：系统字体、跟随系统深浅色、蓝色主操作。
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --muted: #6b7280;
+  --border: #d7dae1;
+  --card: #fbfcfd;
+  --primary: #2563eb;
+  --primary-light: #3b82f6;
+  --primary-dark: #1d4ed8;
+  --primary-text: #ffffff;
+  --hover: #f2f4f8;
+  --error: #dc2626;
+  --ok: #16a34a;
+  --error-bg: #fef2f2;
+  --tab-encode: #2563eb;
+  --tab-decode: #d97706;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1d22;
+    --fg: #e6e8ee;
+    --muted: #9aa3b2;
+    --border: #3a3e48;
+    --card: #22252c;
+    --hover: #333843;
+    --primary: #3b82f6;
+    --primary-light: #60a5fa;
+    --primary-dark: #2563eb;
+    --primary-text: #ffffff;
+    --error: #f87171;
+    --ok: #4ade80;
+    --error-bg: #2a1d1d;
+    --tab-encode: #3b82f6;
+    --tab-decode: #f59e0b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+button {
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: linear-gradient(180deg, var(--primary-light) 0%, var(--primary) 100%);
+  border-color: transparent;
+  color: var(--primary-text);
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #60a5fa 0%, var(--primary-light) 100%);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.36);
+  transform: translateY(-1px);
+}
+
+button.primary:active:not(:disabled) {
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.28);
+  transform: translateY(1px);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.toolbar h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/*
+ * 顶部「图片转码 / Base64 解码」分段切换。
+ * 对齐二维码工具的胶囊轨道 + 滑块式高亮，两个模块用不同强调色
+ * （图片转码=蓝、Base64 解码=橙），未选中时也通过彩色圆点透出主题色。
+ */
+.tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* 彩色圆点：即使未选中也标示该模块主题色 */
+.tab::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+#tab-to-base64::before {
+  background: var(--tab-encode);
+}
+
+#tab-from-base64::before {
+  background: var(--tab-decode);
+}
+
+/* 选中态：整段填充对应强调色，白字 + 同色光晕 */
+#tab-to-base64.active {
+  background: var(--tab-encode);
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, 0.4);
+}
+
+#tab-from-base64.active {
+  background: var(--tab-decode);
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(217, 119, 6, 0.4);
+}
+
+#tab-to-base64.active::before,
+#tab-from-base64.active::before {
+  background: #ffffff;
+}
+
+.container {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.panel {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.panel.active {
+  display: flex;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field > span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.checkbox input {
+  width: auto;
+  padding: 0;
+  margin: 0;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 80px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.url-row {
+  display: flex;
+  gap: 10px;
+}
+
+.url-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.actions.prominent {
+  gap: 14px;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.actions.secondary {
+  justify-content: flex-end;
+}
+
+/* 拖放 / 上传区域 */
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 160px;
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  text-align: center;
+  padding: 20px;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: var(--primary);
+  background: var(--hover);
+}
+
+.drop-zone p {
+  margin: 0;
+}
+
+.drop-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.drop-zone .muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 预览区 */
+.preview-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  position: relative;
+  padding: 12px;
+  overflow: hidden;
+}
+
+#to-preview,
+#from-preview {
+  max-width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+}
+
+.placeholder {
+  color: var(--muted);
+  text-align: center;
+  padding: 20px;
+}
+
+/* 元信息网格 */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.meta-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.meta-value {
+  font-size: 14px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+/* 错误提示 */
+.error-box {
+  padding: 10px 12px;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  background: var(--error-bg);
+  color: var(--error);
+  font-size: 13px;
+}
+
+.status {
+  padding: 10px 20px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  min-height: 38px;
+}
+
+.status.error {
+  color: var(--error);
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.muted {
+  color: var(--muted);
+}

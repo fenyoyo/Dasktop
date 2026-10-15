@@ -1,0 +1,282 @@
+/*
+ * 翻译插件 popup 样式。
+ * 设计基调：白色干净背景、浅蓝主色、卡片圆角、现代无衬线字体、无多余装饰。
+ * 仅支持浅色（popup 为浮层，跟随系统亮色主题即可，不做深色分支以保持极简）。
+ */
+
+:root {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --muted: #64748b;
+  --border: #e8edf3;
+  --card: #ffffff;
+  --card-soft: #f7f9fc;
+  --primary: #3b82f6;
+  --primary-strong: #2563eb;
+  --primary-soft: #eff6ff;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow: 0 10px 34px rgba(15, 23, 42, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  width: 100%;
+  min-width: 0;
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg);
+}
+
+/* 顶栏：拖拽手柄，极简无边框 */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  cursor: default;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, var(--primary), #60a5fa);
+}
+
+.brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+/* 语言栏：左源 / 右目标 + 中间交换 */
+.lang-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lang-select {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 9px 30px 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-soft)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.lang-select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.swap {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--primary);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.25s ease;
+}
+
+.swap:hover {
+  background: var(--primary-soft);
+}
+
+.swap:active {
+  transform: rotate(180deg);
+}
+
+/* 文本框卡片 */
+.card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.card textarea {
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  padding: 14px 14px 42px;
+  min-height: 104px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+
+.card textarea::placeholder {
+  color: #aab4c2;
+}
+
+.input-card textarea {
+  min-height: 112px;
+}
+
+.card-actions {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: var(--card-soft);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+
+.icon-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.icon-btn:active {
+  transform: scale(0.94);
+}
+
+/* 底栏：自动翻译开关 + 翻译按钮 */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch input {
+  display: none;
+}
+
+.track {
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  position: relative;
+  transition: background 0.2s ease;
+}
+
+.thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease;
+}
+
+.switch input:checked + .track {
+  background: var(--primary);
+}
+
+.switch input:checked + .track .thumb {
+  transform: translateX(16px);
+}
+
+.switch-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.primary {
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  color: #fff;
+  padding: 9px 22px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.35);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.primary:hover {
+  background: var(--primary-strong);
+}
+
+.primary:active {
+  transform: translateY(1px);
+}
+
+.status {
+  min-height: 16px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.status.error {
+  color: #dc2626;
+}
+
+.status.ok {
+  color: #16a34a;
+}

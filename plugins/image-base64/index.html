@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>图片 Base64 转换</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!--
+      图片 Base64 转换插件。
+      两个标签页：图片转 Base64、Base64 转图片。
+      宿主能力走 window.dasktop；未注入时禁用相关按钮并给出提示。
+    -->
+    <header class="toolbar">
+      <h1>图片 Base64 转换</h1>
+      <nav class="tabs">
+        <button id="tab-to-base64" class="tab active" type="button">图片转码</button>
+        <button id="tab-from-base64" class="tab" type="button">Base64 解码</button>
+      </nav>
+    </header>
+
+    <main class="container">
+      <!-- 图片转 Base64 面板 -->
+      <section id="panel-to-base64" class="panel active">
+        <div
+          id="to-drop"
+          class="drop-zone"
+          tabindex="0"
+          role="button"
+          aria-label="拖放、点击或粘贴图片"
+        >
+          <p class="drop-title">拖放图片到这里</p>
+          <p class="muted">点击选择文件，或将截图粘贴到此处（Ctrl+V）</p>
+          <input id="to-file" type="file" accept="image/*" hidden />
+        </div>
+
+        <label class="field">
+          <span>或粘贴图片 URL</span>
+          <div class="url-row">
+            <input
+              id="to-url"
+              type="url"
+              placeholder="https://example.com/photo.png"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <button id="to-url-load" class="primary" type="button">加载</button>
+          </div>
+        </label>
+
+        <div class="preview-area">
+          <img id="to-preview" alt="原始图片预览" hidden />
+          <span id="to-preview-hint" class="placeholder">尚未选择图片</span>
+        </div>
+
+        <div class="meta-grid" id="to-meta" hidden>
+          <div class="meta-item">
+            <span class="meta-label">格式</span>
+            <span class="meta-value" id="to-format">—</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">尺寸</span>
+            <span class="meta-value" id="to-dimension">—</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">原始大小</span>
+            <span class="meta-value" id="to-original-size">—</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Base64 大小</span>
+            <span class="meta-value" id="to-base64-size">—</span>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-head">
+            <span>Base64 编码</span>
+            <label class="checkbox">
+              <input id="to-include-prefix" type="checkbox" checked />
+              <span>包含 Data URI 前缀</span>
+            </label>
+          </span>
+          <textarea
+            id="to-output"
+            rows="6"
+            readonly
+            placeholder="转换结果会显示在这里"
+            spellcheck="false"
+          ></textarea>
+        </label>
+
+        <div class="actions secondary">
+          <button id="to-copy" type="button" disabled>📋 复制</button>
+          <button id="to-clear" type="button">🗑️ 清空</button>
+        </div>
+      </section>
+
+      <!-- Base64 转图片面板 -->
+      <section id="panel-from-base64" class="panel">
+        <label class="field">
+          <span>Base64 数据</span>
+          <textarea
+            id="from-input"
+            rows="8"
+            placeholder="粘贴 Base64 或完整的 Data URI，例如 data:image/png;base64,iVBORw0KGgo..."
+            spellcheck="false"
+          ></textarea>
+        </label>
+
+        <div class="actions prominent">
+          <button id="from-paste" class="primary" type="button">📋 从剪贴板粘贴</button>
+        </div>
+
+        <div class="error-box" id="from-error" hidden></div>
+
+        <div class="preview-area">
+          <img id="from-preview" alt="转换后的图片预览" hidden />
+          <span id="from-preview-hint" class="placeholder">转换结果会显示在这里</span>
+        </div>
+
+        <div class="meta-grid" id="from-meta" hidden>
+          <div class="meta-item">
+            <span class="meta-label">格式</span>
+            <span class="meta-value" id="from-format">—</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">尺寸</span>
+            <span class="meta-value" id="from-dimension">—</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">数据大小</span>
+            <span class="meta-value" id="from-size">—</span>
+          </div>
+        </div>
+
+        <div class="actions secondary">
+          <button id="from-copy" type="button" disabled>📋 复制图片地址</button>
+          <button id="from-download" type="button" disabled>💾 下载图片</button>
+          <button id="from-clear" type="button">🗑️ 清空</button>
+        </div>
+      </section>
+    </main>
+
+    <footer id="status" class="status muted">就绪。</footer>
+
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

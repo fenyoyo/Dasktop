@@ -1,0 +1,8 @@
+{
+  "id": "image-base64",
+  "name": "图片 Base64 转换",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "permissions": ["clipboard:read", "clipboard:write", "ui:notify"],
+  "window": { "width": 760, "height": 760 }
+}

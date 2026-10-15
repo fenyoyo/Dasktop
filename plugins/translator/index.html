@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>翻译</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!--
+      翻译插件 popup 界面：白色极简、浅蓝主色、卡片圆角。
+      顶栏为拖拽手柄（无边框浮层没有系统标题栏，靠宿主能力桥发起系统拖动）。
+      翻译经由宿主 net.request 代发，避开浏览器同源限制。
+    -->
+    <main class="app">
+      <header class="topbar" id="topbar">
+        <div class="brand">
+          <span class="logo" aria-hidden="true"></span>
+          <span class="brand-name">翻译</span>
+        </div>
+      </header>
+
+      <section class="lang-bar">
+        <select id="src-lang" class="lang-select" aria-label="源语言"></select>
+        <button id="swap" class="swap" type="button" title="交换语言" aria-label="交换语言">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 4v13" />
+            <path d="M4 7l3-3 3 3" />
+            <path d="M17 20V7" />
+            <path d="M20 17l-3 3-3-3" />
+          </svg>
+        </button>
+        <select id="dst-lang" class="lang-select" aria-label="目标语言"></select>
+      </section>
+
+      <section class="card input-card">
+        <textarea id="source" placeholder="输入要翻译的文字…" spellcheck="false"></textarea>
+        <div class="card-actions">
+          <button id="src-speak" class="icon-btn" type="button" title="朗读原文" aria-label="朗读原文">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 5L6 9H3v6h3l5 4V5z" />
+              <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+              <path d="M19 5a9 9 0 0 1 0 14" />
+            </svg>
+          </button>
+          <button id="src-copy" class="icon-btn" type="button" title="复制原文" aria-label="复制原文">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+            </svg>
+          </button>
+        </div>
+      </section>
+
+      <section class="card output-card">
+        <textarea id="result" placeholder="译文" readonly spellcheck="false"></textarea>
+        <div class="card-actions">
+          <button id="dst-speak" class="icon-btn" type="button" title="朗读译文" aria-label="朗读译文">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 5L6 9H3v6h3l5 4V5z" />
+              <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+              <path d="M19 5a9 9 0 0 1 0 14" />
+            </svg>
+          </button>
+          <button id="dst-copy" class="icon-btn" type="button" title="复制译文" aria-label="复制译文">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+            </svg>
+          </button>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <label class="switch">
+          <input id="web-toggle" type="checkbox" />
+          <span class="track"><span class="thumb"></span></span>
+          <span class="switch-label">自动翻译</span>
+        </label>
+        <button id="translate" class="primary" type="button">翻译</button>
+      </footer>
+
+      <div id="status" class="status"></div>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,431 @@
+﻿/*
+ * 二维码工具样式。
+ * 使用系统字体与 prefers-color-scheme 跟随深浅色，不依赖宿主主题。
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --muted: #6b7280;
+  --border: #d7dae1;
+  --card: #fbfcfd;
+  --primary: #2563eb;
+  --primary-light: #3b82f6;
+  --primary-dark: #1d4ed8;
+  --primary-text: #ffffff;
+  --hover: #f2f4f8;
+  --error: #dc2626;
+  --ok: #16a34a;
+  /* 两个模块各自的强调色：生成=蓝、解析=橙，用于切换标签与面板主按钮 */
+  --tab-generate: #2563eb;
+  --tab-scan: #d97706;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1d22;
+    --fg: #e6e8ee;
+    --muted: #9aa3b2;
+    --border: #3a3e48;
+    --card: #22252c;
+    --hover: #333843;
+    --primary: #3b82f6;
+    --primary-light: #60a5fa;
+    --primary-dark: #2563eb;
+    --primary-text: #ffffff;
+    --error: #f87171;
+    --ok: #4ade80;
+    --tab-generate: #3b82f6;
+    --tab-scan: #f59e0b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+button {
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: linear-gradient(180deg, var(--primary-light) 0%, var(--primary) 100%);
+  border-color: transparent;
+  color: var(--primary-text);
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #60a5fa 0%, var(--primary-light) 100%);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.36);
+  transform: translateY(-1px);
+}
+
+button.primary:active:not(:disabled) {
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.28);
+  transform: translateY(1px);
+}
+
+button.primary.large {
+  padding: 12px 24px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.toolbar h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/*
+ * 顶部「生成 / 解析」分段切换。
+ * 胶囊轨道 + 滑块式高亮，两个模块用不同强调色（生成=蓝、解析=橙），
+ * 未选中时也通过彩色圆点透出该模块主题色，解决“看不出区别、不够明显”的问题。
+ */
+.tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* 彩色圆点：即使未选中也标示该模块主题色 */
+.tab::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+#tab-generate::before {
+  background: var(--tab-generate);
+}
+
+#tab-scan::before {
+  background: var(--tab-scan);
+}
+
+/* 选中态：整段填充对应强调色，白字 + 同色光晕 */
+#tab-generate.active {
+  background: var(--tab-generate);
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, 0.4);
+}
+
+#tab-scan.active {
+  background: var(--tab-scan);
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(217, 119, 6, 0.4);
+}
+
+#tab-generate.active::before,
+#tab-scan.active::before {
+  background: #ffffff;
+}
+
+.container {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.panel {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.panel.active {
+  display: flex;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field > span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.field.compact {
+  flex: 1;
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/*
+ * 主操作区：让生成 / 解析这类核心按钮更醒目。
+ * 按钮加宽放大、居中对齐，主按钮带轻微呼吸光晕主动吸引视线，
+ * 用户一进面板就能锁定“该点哪里”。
+ */
+.actions.prominent {
+  gap: 14px;
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.actions.prominent .primary {
+  min-width: 220px;
+  padding: 14px 30px;
+  font-size: 16px;
+  border-radius: 12px;
+  /* 呼吸光晕：用柔和的蓝色外发光持续引导注意力到核心操作 */
+  animation: cta-pulse 2.4s ease-in-out infinite;
+}
+
+/* 生成面板的主按钮独占整行，进一步突出“生成”这一核心动作 */
+.actions.prominent .primary.large {
+  width: 100%;
+  min-width: 0;
+  padding: 16px 30px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* 悬停时停止呼吸动画，切换到更亮的上浮态，避免两种 box-shadow 冲突 */
+.actions.prominent .primary:hover:not(:disabled) {
+  animation: none;
+}
+
+@keyframes cta-pulse {
+  0% {
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+  }
+  50% {
+    box-shadow: 0 6px 24px rgba(37, 99, 235, 0.52);
+  }
+  100% {
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+  }
+}
+
+.actions.secondary {
+  justify-content: flex-end;
+}
+
+/*
+ * 解析面板的主按钮改用橙色强调，与生成面板的蓝色形成强对比，
+ * 呼应顶部切换标签的配色，整页一眼可区分“这是生成还是解析”。
+ */
+#panel-scan .actions.prominent .primary {
+  background: linear-gradient(180deg, #f59e0b 0%, var(--tab-scan) 100%);
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.3);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.14);
+  /* 呼吸光晕同步为橙色，避免蓝边套在橙按钮上显脏 */
+  animation: cta-pulse-warm 2.4s ease-in-out infinite;
+}
+
+#panel-scan .actions.prominent .primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fbbf24 0%, #f59e0b 100%);
+  box-shadow: 0 6px 16px rgba(217, 119, 6, 0.38);
+  transform: translateY(-1px);
+}
+
+#panel-scan .actions.prominent .primary:active:not(:disabled) {
+  background: linear-gradient(180deg, var(--tab-scan) 0%, #b45309 100%);
+  box-shadow: 0 2px 6px rgba(217, 119, 6, 0.3);
+  transform: translateY(1px);
+}
+
+@keyframes cta-pulse-warm {
+  0% {
+    box-shadow: 0 4px 12px rgba(217, 119, 6, 0.28);
+  }
+  50% {
+    box-shadow: 0 6px 24px rgba(217, 119, 6, 0.52);
+  }
+  100% {
+    box-shadow: 0 4px 12px rgba(217, 119, 6, 0.28);
+  }
+}
+
+.result-area,
+.preview-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  position: relative;
+}
+
+#generate-canvas {
+  display: none;
+  max-width: 100%;
+  max-height: 400px;
+}
+
+#generate-canvas.visible {
+  display: block;
+}
+
+.placeholder {
+  color: var(--muted);
+  text-align: center;
+  padding: 20px;
+}
+
+#generate-canvas.visible + #generate-placeholder {
+  display: none;
+}
+
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 160px;
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  text-align: center;
+  padding: 20px;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: var(--primary);
+  background: var(--hover);
+}
+
+.drop-zone p {
+  margin: 0;
+}
+
+.drop-zone .muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preview-area {
+  min-height: 120px;
+  padding: 12px;
+}
+
+#scan-preview {
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+
+#scan-preview.visible {
+  display: block;
+}
+
+#scan-preview.visible + #scan-preview-hint {
+  display: none;
+}
+
+.status {
+  padding: 10px 20px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  min-height: 38px;
+}
+
+.status.error {
+  color: var(--error);
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.muted {
+  color: var(--muted);
+}
