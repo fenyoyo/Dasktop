@@ -29,17 +29,16 @@ use tauri::{AppHandle, Manager};
 
 use crate::domain::app::settings;
 use crate::domain::plugin::{
-    PluginManifest, PluginWindowKind, PluginWindowSize, PluginWindowSizeSource, PluginWindowSizeView,
+    PluginManifest, PluginWindowSize, PluginWindowSizeSource, PluginWindowSizeView,
     PLUGIN_WINDOW_LABEL_PREFIX,
-};
-use crate::domain::plugin::contract::{
-    PLUGIN_QUICK_WINDOW_MIN_SIZE, PLUGIN_QUICK_WINDOW_SIZE, PLUGIN_WINDOW_MAX_SIZE,
 };
 use crate::infrastructure::database;
 
 const PLUGIN_ID_COLUMN: &str = "plugin_id";
 const WIDTH_COLUMN: &str = "width";
 const HEIGHT_COLUMN: &str = "height";
+const X_COLUMN: &str = "x";
+const Y_COLUMN: &str = "y";
 const UPDATED_AT_COLUMN: &str = "updated_at";
 const KEY_COLUMN: &str = "key";
 const VALUE_COLUMN: &str = "value";
@@ -58,16 +57,11 @@ pub async fn resolve_window_size(
     }
 
     let declared = manifest.and_then(|manifest| manifest.window).unwrap_or_default();
-    let is_quick = declared.kind == Some(PluginWindowKind::Quick);
 
-    // quick 窗口有独立尺寸区间（更小、下限更高），否则沿用全局默认尺寸。
-    let fallback = if is_quick {
-        PluginWindowSize::from_tuple(PLUGIN_QUICK_WINDOW_SIZE)
-    } else {
-        read_default_window_size(app)
-            .await
-            .unwrap_or_else(PluginWindowSize::default_size)
-    };
+    // 标准插件窗口沿用全局默认尺寸作为兜底；作者未声明时尺寸落回全局默认。
+    let fallback = read_default_window_size(app)
+        .await
+        .unwrap_or_else(PluginWindowSize::default_size);
 
     let source = if declared.width.is_some() || declared.height.is_some() {
         PluginWindowSizeSource::Declared
@@ -75,20 +69,10 @@ pub async fn resolve_window_size(
         PluginWindowSizeSource::Global
     };
 
-    // quick 窗口用更高的下限夹取；其尺寸区间与标准窗口不同，不能用全局下限糊弄。
-    let size = if is_quick {
-        PluginWindowSize::clamped_between(
-            declared.width.unwrap_or(fallback.width),
-            declared.height.unwrap_or(fallback.height),
-            PluginWindowSize::from_tuple(PLUGIN_QUICK_WINDOW_MIN_SIZE),
-            PluginWindowSize::from_tuple(PLUGIN_WINDOW_MAX_SIZE),
-        )
-    } else {
-        PluginWindowSize::clamped(
-            declared.width.unwrap_or(fallback.width),
-            declared.height.unwrap_or(fallback.height),
-        )
-    };
+    let size = PluginWindowSize::clamped(
+        declared.width.unwrap_or(fallback.width),
+        declared.height.unwrap_or(fallback.height),
+    );
 
     PluginWindowSizeView::new(size, source)
 }
@@ -266,6 +250,140 @@ async fn ensure_window_size_storage(pool: &SqlitePool) -> Result<(), String> {
         .execute(pool)
         .await
         .map_err(|error| format!("初始化插件窗口尺寸存储失败：{error}"))?;
+
+    Ok(())
+}
+
+/// 解析插件窗口打开时应还原到的位置（逻辑像素），读不到返回 `None` 表示「没有记住的位置」。
+///
+/// 与尺寸同理，读不到一律回落到系统默认摆位，
+/// 不向上抛错：位置是锦上添花的偏好，没读到应当把窗口正常开出来。
+pub async fn resolve_window_position(
+    app: &AppHandle,
+    plugin_id: &str,
+) -> Option<(f64, f64)> {
+    let pool = database::resolve_app_sqlite_pool(app).await.ok()??;
+
+    let table_name = settings::tables::PLUGIN_WINDOW_POSITIONS;
+    let query = format!(
+        "
+        SELECT {X_COLUMN}, {Y_COLUMN}
+        FROM {table_name}
+        WHERE {PLUGIN_ID_COLUMN} = ?
+        "
+    );
+    let row = sqlx::query(&query)
+        .bind(plugin_id)
+        .fetch_optional(&pool)
+        .await
+        .ok()??;
+
+    Some((
+        row.try_get::<f64, _>(X_COLUMN).ok()?,
+        row.try_get::<f64, _>(Y_COLUMN).ok()?,
+    ))
+}
+
+/// 记住单个插件的窗口位置，单位为逻辑像素。
+///
+/// 取值先过缩放率换算：调用方给的是物理像素，这里除以 `scale_factor` 收敛成逻辑坐标，
+/// 保证不同 DPI 屏幕上「记住的位置」视觉一致。
+pub async fn save_window_position(
+    app: &AppHandle,
+    plugin_id: &str,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    // 前端尚未连库时返回 Ok：这一次窗口按默认位置开出来就够了，下一次就能读到。
+    let Some(pool) = database::resolve_app_sqlite_pool(app).await? else {
+        return Ok(());
+    };
+
+    ensure_window_position_storage(&pool).await?;
+
+    let table_name = settings::tables::PLUGIN_WINDOW_POSITIONS;
+    let query = format!(
+        "
+        INSERT INTO {table_name} ({PLUGIN_ID_COLUMN}, {X_COLUMN}, {Y_COLUMN}, {UPDATED_AT_COLUMN})
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT({PLUGIN_ID_COLUMN}) DO UPDATE SET
+          {X_COLUMN} = excluded.{X_COLUMN},
+          {Y_COLUMN} = excluded.{Y_COLUMN},
+          {UPDATED_AT_COLUMN} = excluded.{UPDATED_AT_COLUMN}
+        "
+    );
+
+    sqlx::query(&query)
+        .bind(plugin_id)
+        .bind(x)
+        .bind(y)
+        .bind(current_timestamp_millis())
+        .execute(&pool)
+        .await
+        .map_err(|error| format!("保存插件窗口位置失败：{error}"))?;
+
+    Ok(())
+}
+
+/// 在插件窗口失焦 / 关闭时把它的最后位置写回持久化。
+///
+/// 选这两个时机而不是 `Moved`：拖动过程中 `Moved` 会逐像素触发，逐帧写库既浪费又在
+/// 拖动还没结束时就把中间坐标记成了「最终位置」；而失焦 / 关闭是用户
+/// 「放手」的明确信号，记下来的就是他最后停留的位置，下次打开原样还原。
+pub fn attach_position_persistence(window: &tauri::WebviewWindow) {
+    let Some(plugin_id) = resolve_plugin_id_from_label(window.label()) else {
+        return;
+    };
+
+    let callback_window = window.clone();
+
+    window.on_window_event(move |event| {
+        // 失焦或关闭都是「本次使用结束」的信号，记录最终位置。
+        let settled = matches!(event, tauri::WindowEvent::CloseRequested { .. })
+            || matches!(event, tauri::WindowEvent::Focused(false));
+        if !settled {
+            return;
+        }
+
+        let Ok(position) = callback_window.outer_position() else {
+            return;
+        };
+
+        let scale_factor = callback_window.scale_factor().unwrap_or(1.0).max(1.0);
+        let x = position.x as f64 / scale_factor;
+        let y = position.y as f64 / scale_factor;
+        let app_handle = callback_window.app_handle().clone();
+        let plugin_id = plugin_id.clone();
+
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = save_window_position(&app_handle, &plugin_id, x, y).await {
+                eprintln!("[plugin] 保存插件 {plugin_id} 窗口位置失败：{error}");
+            }
+        });
+    });
+}
+
+/// 确保插件窗口位置表存在。
+///
+/// 与尺寸表同理，宿主侧保留建表语句：位置只由宿主写入，前端不直连此表，
+/// 但窗口收起时可能发生在设置窗尚未初始化存储的时刻，只依赖前端建表会让那次写回失败。
+async fn ensure_window_position_storage(pool: &SqlitePool) -> Result<(), String> {
+    let table_name = settings::tables::PLUGIN_WINDOW_POSITIONS;
+    let query = format!(
+        "
+        CREATE TABLE IF NOT EXISTS {table_name} (
+          {PLUGIN_ID_COLUMN} TEXT PRIMARY KEY,
+          {X_COLUMN} REAL NOT NULL,
+          {Y_COLUMN} REAL NOT NULL,
+          {UPDATED_AT_COLUMN} INTEGER NOT NULL
+        )
+        "
+    );
+
+    sqlx::query(&query)
+        .execute(pool)
+        .await
+        .map_err(|error| format!("初始化插件窗口位置存储失败：{error}"))?;
 
     Ok(())
 }

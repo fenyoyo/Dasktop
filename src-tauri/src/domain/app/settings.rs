@@ -15,6 +15,8 @@ pub mod tables {
     pub const BOXES: &str = "boxes";
     /// 插件包级窗口尺寸表，主键为插件 id；全局默认值仍走 `app_settings`。
     pub const PLUGIN_WINDOW_SIZES: &str = "plugin_window_sizes";
+    /// 插件包级窗口位置表，主键为插件 id；记录用户拖到的最后落点，下次打开原样还原。
+    pub const PLUGIN_WINDOW_POSITIONS: &str = "plugin_window_positions";
     /// 系统桌面图标接管状态表。
     pub const SHELL_ICON_VISIBILITY_RECORDS: &str = "shell_icon_visibility_records";
 }

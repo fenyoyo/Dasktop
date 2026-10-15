@@ -21,8 +21,7 @@ pub use contract::{
 };
 pub use http::{PluginHttpRequest, PluginHttpResponse};
 pub use manifest::{
-    PluginHotkey, PluginManifest, PluginPackageRecord, PluginScanResult, PluginWindowKind,
-    PluginWindowPreference,
+    PluginManifest, PluginPackageRecord, PluginScanResult, PluginWindowPreference,
 };
 pub use sample::{SamplePackage, SAMPLE_PACKAGES};
 pub use window_size::{PluginWindowSize, PluginWindowSizeSource, PluginWindowSizeView};
