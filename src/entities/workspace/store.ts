@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import {
   captureWorkspaceLayout,
   createWorkspaceDesktopShortcut,
@@ -11,9 +11,15 @@ import {
 import {
   deleteWorkspaceRecord,
   loadWorkspaces,
+  sanitizeWorkspaceCommands,
+  sanitizeWorkspaceLaunchInterval,
   saveWorkspace,
 } from "@/shared/storage/database";
-import type { Workspace, WorkspaceRestoreResult, WorkspaceWindow } from "@/entities/workspace/types";
+import type {
+  Workspace,
+  WorkspaceRestoreOutcome,
+  WorkspaceWindow,
+} from "@/entities/workspace/types";
 
 /**
  * 工作区状态管理。
@@ -24,7 +30,7 @@ import type { Workspace, WorkspaceRestoreResult, WorkspaceWindow } from "@/entit
 export const useWorkspaceStore = defineStore("workspace", () => {
   const workspaces = ref<Workspace[]>([]);
   const isBusy = ref(false);
-  const lastRestoreResults = ref<WorkspaceRestoreResult[]>([]);
+  const lastRestoreResults = ref<WorkspaceRestoreOutcome | null>(null);
 
   /**
    * 应用图标缓存，键为可执行文件路径。
@@ -93,8 +99,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       const currentExecutablePath = await resolveCurrentExecutablePath();
       const windows = await captureWorkspaceLayout([currentExecutablePath]);
       const workspace: Workspace = {
+        commands: [],
         createdAt: Date.now(),
         id: createWorkspaceId(),
+        // 新工作区默认不等待：间隔属于用户按机器性能自行开启的优化项。
+        launchIntervalSeconds: 0,
         name,
         windows,
       };
@@ -110,9 +119,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   /**
-   * 启动工作区：拉起应用并把窗口还原到保存位置。
+   * 启动工作区：拉起应用并把窗口还原到保存位置，随后执行附加命令。
    */
-  async function launchWorkspace(workspaceId: string): Promise<WorkspaceRestoreResult[]> {
+  async function launchWorkspace(workspaceId: string): Promise<WorkspaceRestoreOutcome> {
     const workspace = workspaces.value.find((item) => item.id === workspaceId);
     if (!workspace) {
       throw new Error(`工作区不存在: ${workspaceId}`);
@@ -121,10 +130,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     isBusy.value = true;
 
     try {
-      const results = await restoreWorkspaceLayout(workspace.windows);
-      lastRestoreResults.value = results;
+      const outcome = await restoreWorkspaceLayout(
+        workspace.windows,
+        workspace.launchIntervalSeconds,
+        workspace.commands,
+      );
+      lastRestoreResults.value = outcome;
 
-      return results;
+      return outcome;
     } finally {
       isBusy.value = false;
     }
@@ -264,6 +277,85 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   /**
+   * 调整应用在列表中的位置，改变它在还原时的启动顺序。
+   *
+   * 只与相邻条目交换而不是整表重排：界面上一次点击只挪一行，
+   * 相邻交换能保证顺序稳定，也避免误操作把顺序彻底打乱。
+   * `offset` 为 -1 表示上移、1 表示下移。
+   */
+  async function moveWindow(workspaceId: string, index: number, offset: number): Promise<void> {
+    const workspace = workspaces.value.find((item) => item.id === workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    const windows = [...workspace.windows];
+    const targetIndex = index + offset;
+    const moved = windows[index];
+    const displaced = windows[targetIndex];
+
+    // 首行上移、末行下移取不到目标条目，按无效操作直接忽略。
+    if (!moved || !displaced) {
+      return;
+    }
+
+    windows[index] = displaced;
+    windows[targetIndex] = moved;
+
+    const nextWorkspace: Workspace = { ...workspace, windows };
+    await saveWorkspace(nextWorkspace);
+    workspaces.value = workspaces.value.map((item) =>
+      item.id === workspaceId ? nextWorkspace : item,
+    );
+  }
+
+  /**
+   * 整体替换工作区的附加命令列表。
+   *
+   * 命令列表始终整体读写：界面上新增、编辑、删除、排序都只是数组操作，
+   * 统一在这里规范化后落库，避免每种操作各自维护一套持久化分支。
+   */
+  async function updateCommands(workspaceId: string, commands: string[]): Promise<void> {
+    const workspace = workspaces.value.find((item) => item.id === workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    const nextWorkspace: Workspace = {
+      ...workspace,
+      commands: sanitizeWorkspaceCommands(commands),
+    };
+
+    await saveWorkspace(nextWorkspace);
+    workspaces.value = workspaces.value.map((item) =>
+      item.id === workspaceId ? nextWorkspace : item,
+    );
+  }
+
+  /**
+   * 更新相邻两次启动之间的等待秒数，0 表示不等待。
+   *
+   * 输入框允许用户输入自由文本，这里统一走存储层的规范化逻辑后再落库，
+   * 避免非法值进入还原流程导致等待时长异常。
+   */
+  async function updateLaunchInterval(workspaceId: string, seconds: number): Promise<void> {
+    const workspace = workspaces.value.find((item) => item.id === workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    const nextWorkspace: Workspace = {
+      ...workspace,
+      launchIntervalSeconds: sanitizeWorkspaceLaunchInterval(seconds),
+    };
+
+    await saveWorkspace(nextWorkspace);
+    workspaces.value = workspaces.value.map((item) =>
+      item.id === workspaceId ? nextWorkspace : item,
+    );
+  }
+
+  /**
    * 在桌面创建工作区快捷方式，返回快捷方式完整路径。
    */
   async function createDesktopShortcut(workspaceId: string, desktopPath: string): Promise<string> {
@@ -295,16 +387,31 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     isBusy,
     lastRestoreResults,
     launchWorkspace,
+    moveWindow,
     recaptureWorkspace,
     removeWindow,
     removeWorkspace,
     renameWorkspace,
     resolveStartupWorkspace,
     setWindowMinimized,
+    updateCommands,
+    updateLaunchInterval,
     updateWindowArguments,
     workspaces,
   };
 });
+
+/**
+ * 开发期热更新支持。
+ *
+ * Pinia 的 Store 实例按 id 缓存在 pinia 内部，Vite 热更新只替换模块代码、
+ * 不会重建已有实例，于是新增的 action 在当前运行的应用里「找不到」，
+ * 表现为 `store.xxx is not a function`。注册后热更新会把新的 setup 结果
+ * 合并进现有实例，改 Store 不再需要重启应用。
+ */
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useWorkspaceStore, import.meta.hot));
+}
 
 /**
  * 生成工作区 ID，时间戳前缀保证列表按创建顺序可读。

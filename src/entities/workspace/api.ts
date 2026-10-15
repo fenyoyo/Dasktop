@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { WorkspaceRestoreResult, WorkspaceWindow } from "./types";
+import type {
+  WorkspaceRestoreOutcome,
+  WorkspaceWindow,
+} from "./types";
 
 /**
  * 捕获当前桌面的应用窗口布局。
@@ -13,12 +16,21 @@ export async function captureWorkspaceLayout(
 }
 
 /**
- * 按保存的窗口列表启动应用并还原窗口位置。
+ * 按保存的窗口列表启动应用并还原窗口位置，随后执行附加命令。
+ *
+ * 窗口列表的顺序即启动顺序；`launchIntervalSeconds` 是相邻两次启动之间的
+ * 等待秒数，0 表示不等待；`commands` 在应用全部还原完成后按顺序执行。
  */
 export async function restoreWorkspaceLayout(
   windows: WorkspaceWindow[],
-): Promise<WorkspaceRestoreResult[]> {
-  return invoke<WorkspaceRestoreResult[]>("restore_workspace_layout", { windows });
+  launchIntervalSeconds: number,
+  commands: string[],
+): Promise<WorkspaceRestoreOutcome> {
+  return invoke<WorkspaceRestoreOutcome>("restore_workspace_layout", {
+    commands,
+    launchIntervalSeconds,
+    windows,
+  });
 }
 
 /**

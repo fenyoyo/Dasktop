@@ -22,10 +22,11 @@ export interface WorkspaceWindow {
   /** 窗口高度，单位为物理像素 */
   height: number;
   /**
-   * 还原时是否让该应用窗口保持最小化。
+   * 该窗口是否被收起。
    *
-   * 用于把「随工作区一起打开但暂时不需要看」的应用先行收起，
-   * 例如常驻后台的聊天工具或监控面板。
+   * 捕获时窗口处于最小化状态就记为 true，还原流程会先把它摆到记录的位置
+   * 再收起，用户展开时仍回到原位；界面上可以手动覆盖，用于让「随工作区
+   * 一起打开但暂时不需要看」的应用先行收起，例如常驻后台的聊天工具。
    */
   minimized: boolean;
   /** 窗口标题，仅用于界面展示 */
@@ -42,14 +43,54 @@ export interface WorkspaceWindow {
  * 一个完整的工作区定义。
  */
 export interface Workspace {
+  /**
+   * 应用全部还原完成后按填写顺序执行的附加命令。
+   *
+   * 用于补齐「宿主应用起来了但内部服务还没起来」的场景：例如捕获了
+   * Docker Desktop，再在这里填 `docker start mysql`，启动工作区时就会
+   * 在 Docker Desktop 就位后自动拉起容器。命令交给系统 cmd 执行。
+   */
+  commands: string[];
   /** 创建时间戳，用于列表排序 */
   createdAt: number;
   /** 工作区唯一标识 */
   id: string;
+  /**
+   * 相邻两次应用启动之间的等待秒数，0 表示不等待。
+   *
+   * 还原时应用逐个启动并等待窗口出现，连续启动多个重型应用会同时抢占
+   * 磁盘与 CPU，用固定间隔错峰可以明显改善启动过程。
+   */
+  launchIntervalSeconds: number;
   /** 用户命名的工作区名称 */
   name: string;
   /** 该工作区包含的应用窗口列表 */
   windows: WorkspaceWindow[];
+}
+
+/**
+ * 单条附加命令的执行结果。
+ */
+export interface WorkspaceCommandResult {
+  /** 用户填写的命令原文，前端据此匹配展示条目 */
+  command: string;
+  /** 失败原因或命令输出摘要，成功且无输出时为空字符串 */
+  message: string;
+  /** 该命令是否以 0 退出 */
+  success: boolean;
+}
+
+/**
+ * 单次还原的完整结果，应用与命令分开返回。
+ *
+ * 两者身份来源不同（应用靠可执行文件路径匹配、命令靠填写顺序匹配），
+ * 分开承载可以让前端各自映射，不需要额外的类型判别字段。
+ */
+export interface WorkspaceRestoreOutcome {
+  /** 附加命令的执行结果，按填写顺序 */
+  commands: WorkspaceCommandResult[];
+  /** 应用窗口的还原结果，顺序与传入的窗口列表一致 */
+  windows: WorkspaceRestoreResult[];
 }
 
 /**

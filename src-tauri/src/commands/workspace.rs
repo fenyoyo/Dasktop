@@ -14,11 +14,17 @@ pub fn capture_workspace_layout(
 }
 
 /// 按保存的窗口列表启动应用并还原窗口位置。
+///
+/// `launch_interval_seconds` 由前端从工作区设置中读出：窗口列表的顺序即启动顺序，
+/// 相邻两次启动之间的等待秒数，0 表示不等待。
+/// `commands` 同样来自工作区设置，在应用全部还原完成后按顺序执行。
 #[tauri::command]
 pub fn restore_workspace_layout(
     windows: Vec<WorkspaceWindow>,
-) -> Result<Vec<workspace::WorkspaceRestoreResult>, String> {
-    workspace::restore_layout(windows)
+    launch_interval_seconds: u32,
+    commands: Vec<String>,
+) -> Result<workspace::WorkspaceRestoreOutcome, String> {
+    workspace::restore_layout(windows, launch_interval_seconds, commands)
 }
 
 /// 返回当前 Dasktop 进程的可执行文件路径，供前端构造工作区排除列表。

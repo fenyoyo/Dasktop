@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::infrastructure::windows::workspace::{
     apply_window_placements, capture_visible_windows, create_workspace_shortcut,
-    has_visible_window, launch_executable, WorkspaceWindow,
+    has_visible_window, launch_executable, run_shell_command, WorkspaceWindow,
 };
 
 /// 单次还原中等待窗口出现的轮询间隔。
@@ -37,22 +37,41 @@ pub fn capture_current_layout(
     capture_visible_windows(&excluded_paths)
 }
 
-/// 按保存的窗口列表还原应用布局。
+/// 按保存的窗口列表还原应用布局，并执行工作区的附加命令。
 ///
-/// 返回每个应用的处理结果，供前端展示启动状态，与 PowerToys 的状态对话框语义一致。
+/// 返回应用的还原结果和命令的执行结果，供前端展示启动状态，
+/// 与 PowerToys 的状态对话框语义一致。
 ///
 /// 应用已在运行时跳过启动步骤直接定位，避免多实例应用重复开窗；
 /// 该行为与 PowerToys 的「移动现有窗口」选项一致。
+///
+/// `windows` 的数组顺序就是启动顺序，前端通过上移/下移调整。
+/// `launch_interval_seconds` 是相邻两次启动之间的固定等待秒数，0 表示不等待：
+/// 连续启动多个重型应用会同时抢占磁盘与 CPU，错峰启动能明显改善启动过程。
+/// `commands` 是应用全部还原完成后按填写顺序执行的附加命令，用于补齐
+/// 「应用起来了但服务还没起来」的场景，例如 Docker Desktop 启动后执行
+/// `docker start mysql`。
 pub fn restore_layout(
     windows: Vec<WorkspaceWindow>,
-) -> Result<Vec<WorkspaceRestoreResult>, String> {
+    launch_interval_seconds: u32,
+    commands: Vec<String>,
+) -> Result<WorkspaceRestoreOutcome, String> {
     let mut results = Vec::with_capacity(windows.len());
+    // 已真正启动过的应用数量：间隔只服务于错峰启动，
+    // 复用了运行中实例的应用没有启动开销，不应该占用等待时间。
+    let mut launched_count = 0usize;
 
     for window in windows {
         // 已有可见窗口说明应用处于运行状态，直接复用而不是再启一个实例。
         let already_running = has_visible_window(&window.executable_path);
 
         if !already_running {
+            // 第一个启动的应用立即拉起，之后的每个应用先等待设定间隔，
+            // 把连续启动错开，而不是让所有进程同时争抢资源。
+            if launched_count > 0 && launch_interval_seconds > 0 {
+                sleep(Duration::from_secs(u64::from(launch_interval_seconds)));
+            }
+
             let launch_result = launch_executable(&window.executable_path, &window.arguments);
             if let Err(error) = launch_result {
                 results.push(WorkspaceRestoreResult {
@@ -63,6 +82,8 @@ pub fn restore_layout(
                 });
                 continue;
             }
+
+            launched_count += 1;
         }
 
         // 已存在实例时窗口已经就绪，轮询能在第一时间命中；
@@ -80,7 +101,43 @@ pub fn restore_layout(
         });
     }
 
-    Ok(results)
+    // 附加命令放在应用之后：命令都是启动宿主应用之后的收尾动作，
+    // 例如 Docker 的 `docker start mysql` 必须先有 Docker Desktop 在跑。
+    let command_results = run_commands(&commands);
+
+    Ok(WorkspaceRestoreOutcome {
+        commands: command_results,
+        windows: results,
+    })
+}
+
+/// 按填写顺序逐条执行附加命令。
+///
+/// 顺序执行而不是并发：命令之间常有依赖（先起容器再初始化数据），
+/// 并发执行会让输出交错、失败原因难以定位。
+fn run_commands(commands: &[String]) -> Vec<WorkspaceCommandResult> {
+    let mut results = Vec::with_capacity(commands.len());
+
+    for command in commands {
+        // 允许列表里保留占位行，空命令直接跳过而不是报错。
+        let trimmed = command.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let (success, message) = match run_shell_command(trimmed) {
+            Ok(output) => (true, output),
+            Err(error) => (false, error),
+        };
+
+        results.push(WorkspaceCommandResult {
+            command: trimmed.to_owned(),
+            message,
+            success,
+        });
+    }
+
+    results
 }
 
 /// 轮询等待目标应用窗口出现，出现后立即移动并调整尺寸。
@@ -156,6 +213,32 @@ fn sanitize_shortcut_name(name: &str) -> String {
     } else {
         sanitized
     }
+}
+
+/// 一次工作区还原的完整结果。
+///
+/// 拆成应用与命令两个列表而不是合成一个：两者身份来源不同（应用靠可执行
+/// 文件路径匹配、命令靠填写顺序匹配），分开返回让前端各自映射，
+/// 不需要再引入类型判别字段。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRestoreOutcome {
+    /// 附加命令的执行结果，按填写顺序返回。
+    pub commands: Vec<WorkspaceCommandResult>,
+    /// 应用窗口的还原结果，顺序与传入的窗口列表一致。
+    pub windows: Vec<WorkspaceRestoreResult>,
+}
+
+/// 单条附加命令的执行结果，用于设置页展示执行状态。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCommandResult {
+    /// 用户填写的原始命令，前端据此匹配展示条目。
+    pub command: String,
+    /// 失败原因或命令输出摘要，成功且无输出时为空字符串。
+    pub message: String,
+    /// 该命令是否以 0 退出。
+    pub success: bool,
 }
 
 /// 单个应用的还原结果，用于设置页展示启动状态。

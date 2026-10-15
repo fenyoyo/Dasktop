@@ -72,8 +72,10 @@ export function useWorkspaceStartup() {
 
     try {
       await workspaceStore.initializeWorkspaces();
-      const results = await workspaceStore.launchWorkspace(workspaceId);
-      startupResults.value = results;
+      const outcome = await workspaceStore.launchWorkspace(workspaceId);
+      // 快捷方式启动的提示只统计应用窗口；附加命令的状态不在这里展示，
+      // 避免把两种条目混进同一句摘要。
+      startupResults.value = outcome.windows;
     } catch (error) {
       startupError.value = error instanceof Error ? error.message : String(error);
     }

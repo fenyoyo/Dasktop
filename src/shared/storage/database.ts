@@ -446,20 +446,47 @@ function dedupePreservingOrder(values: string[]): string[] {
 }
 
 /**
- * 工作区表保存用户命名的应用窗口布局，窗口列表以 JSON 存储。
+ * 工作区表保存用户命名的应用窗口布局，窗口列表与附加命令都以 JSON 存储。
  *
  * 窗口数量和字段结构随捕获结果变化，拆成子表只会增加同步成本，
- * 且工作区始终整体读写，因此用单个 JSON 列承载窗口列表。
+ * 且工作区始终整体读写，因此用单个 JSON 列承载窗口列表；
+ * 附加命令是同样性质的变长列表，一并按 JSON 列存储。
  */
 async function ensureWorkspaceStorage(database: Database): Promise<void> {
+  await resetIncompatibleWorkspacesTable(database);
+
   await database.execute(`
     CREATE TABLE IF NOT EXISTS ${APP_SETTINGS_STORAGE.tables.workspaces} (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       windows_json TEXT NOT NULL,
+      launch_interval_seconds INTEGER NOT NULL DEFAULT 0,
+      commands_json TEXT NOT NULL DEFAULT '[]',
       created_at INTEGER NOT NULL
     )
   `);
+}
+
+/**
+ * 当前版本不迁移旧工作区结构；缺少新列的旧表会被整体重建为空状态。
+ *
+ * 与 boxes 表保持同一策略：未上线前不做数据结构迁移，
+ * 避免为了兼容旧列在读写路径上留下分支判断。
+ */
+async function resetIncompatibleWorkspacesTable(database: Database): Promise<void> {
+  const rows = await database.select<Array<Record<string, unknown>>>(`
+    PRAGMA table_info(${APP_SETTINGS_STORAGE.tables.workspaces})
+  `);
+  if (rows.length === 0) {
+    return;
+  }
+
+  const columnNames = new Set(rows.map((row) => String(row.name)));
+  if (columnNames.has("launch_interval_seconds") && columnNames.has("commands_json")) {
+    return;
+  }
+
+  await database.execute(`DROP TABLE IF EXISTS ${APP_SETTINGS_STORAGE.tables.workspaces}`);
 }
 
 /**
@@ -469,14 +496,16 @@ export async function loadWorkspaces(): Promise<Workspace[]> {
   const database = await getDatabase();
   await ensureWorkspaceStorage(database);
   const rows = await database.select<Array<Record<string, unknown>>>(`
-    SELECT id, name, windows_json, created_at
+    SELECT id, name, windows_json, launch_interval_seconds, commands_json, created_at
     FROM ${APP_SETTINGS_STORAGE.tables.workspaces}
     ORDER BY created_at ASC
   `);
 
   return rows.map((row) => ({
+    commands: parseWorkspaceCommands(row.commands_json),
     createdAt: Number(row.created_at),
     id: String(row.id),
+    launchIntervalSeconds: sanitizeWorkspaceLaunchInterval(row.launch_interval_seconds),
     name: String(row.name),
     windows: parseWorkspaceWindows(row.windows_json),
   }));
@@ -491,14 +520,23 @@ export async function saveWorkspace(workspace: Workspace): Promise<void> {
 
   await database.execute(
     `
-      INSERT INTO ${APP_SETTINGS_STORAGE.tables.workspaces} (id, name, windows_json, created_at)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO ${APP_SETTINGS_STORAGE.tables.workspaces} (id, name, windows_json, launch_interval_seconds, commands_json, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         windows_json = excluded.windows_json,
+        launch_interval_seconds = excluded.launch_interval_seconds,
+        commands_json = excluded.commands_json,
         created_at = excluded.created_at
     `,
-    [workspace.id, workspace.name, JSON.stringify(workspace.windows), workspace.createdAt],
+    [
+      workspace.id,
+      workspace.name,
+      JSON.stringify(workspace.windows),
+      sanitizeWorkspaceLaunchInterval(workspace.launchIntervalSeconds),
+      JSON.stringify(sanitizeWorkspaceCommands(workspace.commands)),
+      workspace.createdAt,
+    ],
   );
 }
 
@@ -527,6 +565,69 @@ function parseWorkspaceWindows(raw: unknown): WorkspaceWindow[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * 启动间隔的取值范围，单位为秒。
+ *
+ * 上限取 60 秒：再长会把一次还原拖成几分钟，用户等待成本明显高于错峰收益；
+ * 下限为 0，表示关闭间隔、连续启动。
+ */
+const WORKSPACE_LAUNCH_INTERVAL_RANGE = { max: 60, min: 0 } as const;
+
+/**
+ * 单条附加命令的长度上限。
+ *
+ * 命令交给 cmd 执行，异常超长的文本既没有意义也会拖慢结果展示，
+ * 因此在写入前直接截断。
+ */
+const WORKSPACE_COMMAND_MAX_LENGTH = 512;
+
+/**
+ * 规范化附加命令列表：只保留非空字符串，去首尾空白并截断超长文本。
+ *
+ * 读写两侧都经过这里：界面允许用户先敲一条空行再补内容，
+ * 库里也可能被外部改动成其它结构，脏数据直接过滤而不是让还原流程带上
+ * 一条无法执行的空命令。
+ */
+export function sanitizeWorkspaceCommands(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().slice(0, WORKSPACE_COMMAND_MAX_LENGTH))
+    .filter((item) => item.length > 0);
+}
+
+/**
+ * 反序列化附加命令列表，JSON 损坏时退化为空列表。
+ */
+function parseWorkspaceCommands(raw: unknown): string[] {
+  try {
+    return sanitizeWorkspaceCommands(JSON.parse(String(raw)));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 把启动间隔规范成合法整数秒。
+ *
+ * 输入框允许自由文本、数据库列也可能被外部改动，因此读取和写入都经过这里：
+ * 非法值按 0 处理，越界值夹到边界，而不是丢弃整条工作区记录。
+ */
+export function sanitizeWorkspaceLaunchInterval(value: unknown): number {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) {
+    return WORKSPACE_LAUNCH_INTERVAL_RANGE.min;
+  }
+
+  return Math.min(
+    WORKSPACE_LAUNCH_INTERVAL_RANGE.max,
+    Math.max(WORKSPACE_LAUNCH_INTERVAL_RANGE.min, Math.trunc(seconds)),
+  );
 }
 
 /**
