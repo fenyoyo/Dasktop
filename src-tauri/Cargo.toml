@@ -42,12 +42,15 @@ serde = { version = "1.0.228", features = ["derive"] }
 # 插件清单解析需要 JSON 反序列化；该 crate 已由 tauri 传递依赖引入，此处显式声明以直接使用。
 serde_json = "1.0.150"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
-# Tauri 要求 Rust crate 与前端 NPM 包保持同一 major/minor，故锁定到 2.11.x 对齐 @tauri-apps/api 2.11.0
-tauri = { version = "~2.11.2", features = ["tray-icon"] }
+# Tauri 锁定到 2.12.x：插件启动热键依赖 tauri-plugin-global-shortcut 2.4.1，该插件要求运行时 tauri ^2.12，故主版本必须一致；前端 @tauri-apps/api 亦应同步到 2.12.x。
+tauri = { version = "~2.12", features = ["tray-icon"] }
 tauri-plugin-autostart = "~2.5.1"
 # 同理锁定到 2.4.x 对齐 @tauri-apps/plugin-sql 2.4.0
 tauri-plugin-sql = { version = "~2.4.0", features = ["sqlite"] }
-windows = { version = "0.61.3", features = [
+# 插件启动热键的系统级注册：把宿主配置表里每个插件一个的启动热键挂到系统。
+# 锁到与 Tauri 主版本一致的 2.4.x（global-shortcut 与 tauri 同版本线）。
+tauri-plugin-global-shortcut = "~2.4.1"
+windows = { version = "0.62", features = [
   "Win32_Foundation",
   # 工作区附加命令的输出按控制台代码页写出，需要 MultiByteToWideChar 做解码回退
   "Win32_Globalization",
@@ -73,4 +76,5 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_Shell_Common",
   "Win32_UI_WindowsAndMessaging",
 ] }
-windows-core = "0.61.2"
+windows-core = "0.62"
+tauri-build = "2.6.2"
