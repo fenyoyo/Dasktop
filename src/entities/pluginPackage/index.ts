@@ -45,7 +45,6 @@ export {
   type PluginPackageManifest,
   type PluginPackageRecord,
   type PluginPermission,
-  type PluginHotkey,
   type PluginHotkeyRegistration,
   type PluginHotkeyStatus,
   type PluginRuntimeRecord,

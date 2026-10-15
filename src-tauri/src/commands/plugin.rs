@@ -23,7 +23,18 @@ use crate::services::plugin;
 /// 记录与全局默认设置，读库是异步的，同步命令里没有可 await 的上下文。
 #[tauri::command]
 pub async fn list_plugins(app: AppHandle) -> Result<PluginScanResult, String> {
-    plugin::scan_plugin_packages(&app).await
+    let result = plugin::scan_plugin_packages(&app).await?;
+
+    // 扫描即「重载」：每重载一次就把最新启动热键重新挂到系统，改键后也能即时生效。
+    // 注册层每次全量重挂（先注销再注册），幂等，重复触发无害。
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = plugin::register_all_plugin_hotkeys(&handle).await {
+            eprintln!("[plugin] 重载后注册热键失败：{error}");
+        }
+    });
+
+    Ok(result)
 }
 
 /// 打开插件的界面窗口；窗口已存在时只把它调到前台。
@@ -33,9 +44,16 @@ pub async fn list_plugins(app: AppHandle) -> Result<PluginScanResult, String> {
 /// **必须声明为 `async`**：同步命令在主线程上执行，而在主线程里建 WebView2 会死锁
 /// （完整推导见 [`plugin::open_plugin_window`]）。这里不是「顺手写成异步」，
 /// 改成同步会让插件窗口打不开、宿主界面一起卡死。
+///
+/// `trigger` 携带「被启动热键唤起」的意图（来自全局快捷键回调）；普通从设置页点开时
+/// 为 `None`。它只影响首次建窗时是否向页面注入唤起意图，不改变建窗结果。
 #[tauri::command]
-pub async fn open_plugin_window(app: AppHandle, plugin_id: String) -> Result<(), String> {
-    plugin::open_plugin_window(&app, &plugin_id).await
+pub async fn open_plugin_window(
+    app: AppHandle,
+    plugin_id: String,
+    trigger: Option<String>,
+) -> Result<(), String> {
+    plugin::open_plugin_window(&app, &plugin_id, trigger.as_deref()).await
 }
 
 /// 列出全部插件热键的注册状态，叠加用户覆盖并标注冲突 / 非法。
@@ -47,18 +65,17 @@ pub async fn list_plugin_hotkeys(app: AppHandle) -> Result<Vec<plugin::PluginHot
     plugin::list_plugin_hotkeys(&app).await
 }
 
-/// 写入或更新某条热键的用户覆盖（生效快捷键 + 是否启用）。
+/// 写入或更新某插件的启动热键配置（生效快捷键 + 是否启用）。
 ///
-/// 覆盖必须指向真实声明的热键；禁用一条热键时不需要先填合法快捷键。
+/// 配置指向真实安装的插件；禁用或清空快捷键时不需要先填合法快捷键。
 #[tauri::command]
 pub async fn set_plugin_hotkey(
     app: AppHandle,
     plugin_id: String,
-    hotkey_id: String,
     accelerator: String,
     enabled: bool,
 ) -> Result<(), String> {
-    plugin::set_plugin_hotkey(&app, &plugin_id, &hotkey_id, &accelerator, enabled).await
+    plugin::set_plugin_hotkey(&app, &plugin_id, &accelerator, enabled).await
 }
 
 /// 读取插件包内文本文件，对应 `fs:read` 能力。

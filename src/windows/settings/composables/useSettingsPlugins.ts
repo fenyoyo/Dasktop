@@ -35,10 +35,9 @@ export interface SettingsPluginsContext {
   runtime: ComputedRef<PluginRuntimeSnapshot>;
   /** 记住某个插件的窗口尺寸。 */
   savePluginWindowSize: (pluginId: string, width: number, height: number) => Promise<void>;
-  /** 保存某条热键的用户覆盖（生效快捷键 + 是否启用）。 */
+  /** 保存某个插件的启动热键配置（生效快捷键 + 是否启用）。 */
   savePluginHotkey: (
     pluginId: string,
-    hotkeyId: string,
     accelerator: string,
     enabled: boolean,
   ) => Promise<void>;
@@ -103,12 +102,11 @@ export function useSettingsPlugins(): SettingsPluginsContext {
 
   async function rememberPluginHotkey(
     pluginId: string,
-    hotkeyId: string,
     accelerator: string,
     enabled: boolean,
   ): Promise<void> {
     try {
-      await savePluginHotkey(pluginId, hotkeyId, accelerator, enabled);
+      await savePluginHotkey(pluginId, accelerator, enabled);
     } catch (error) {
       console.error("[plugin] 保存插件热键失败", error);
     }

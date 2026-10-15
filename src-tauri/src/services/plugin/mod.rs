@@ -27,7 +27,9 @@ mod hotkey;
 mod protocol;
 mod window_preference;
 
-pub use hotkey::{list_plugin_hotkeys, set_plugin_hotkey, PluginHotkeyRegistration};
+pub use hotkey::{
+    list_plugin_hotkeys, register_all_plugin_hotkeys, set_plugin_hotkey, PluginHotkeyRegistration,
+};
 pub use protocol::handle_plugin_asset_request;
 
 use std::path::PathBuf;
@@ -132,7 +134,11 @@ pub fn resolve_caller_plugin_id(window_label: &str, claimed_plugin_id: &str) -> 
 /// `async_runtime::spawn`，落到 tokio 多线程运行时的 worker 线程上，`send_user_message`
 /// 走事件循环代理，建窗由主线程在事件循环里正常完成。Tauri 自己的 `plugin:window|create`
 /// 也是 `async` 的，同一个原因。
-pub async fn open_plugin_window(app: &AppHandle, plugin_id: &str) -> Result<(), String> {
+pub async fn open_plugin_window(
+    app: &AppHandle,
+    plugin_id: &str,
+    trigger: Option<&str>,
+) -> Result<(), String> {
     if !plugin_package::is_valid_plugin_id(plugin_id) {
         return Err(format!("非法插件 id：{plugin_id}"));
     }
@@ -166,21 +172,45 @@ pub async fn open_plugin_window(app: &AppHandle, plugin_id: &str) -> Result<(), 
     let window_size =
         window_preference::resolve_window_size(app, plugin_id, Some(&manifest)).await;
 
-    let window = tauri::WebviewWindowBuilder::new(
+    // 标准插件窗口沿用全局最小尺寸下限；下限与 contract.rs 的 PLUGIN_WINDOW_MIN_SIZE 保持一致，
+    // 否则 WebView 会把低于下限的窗口自行拉回下限，「设了 200×200 读回来却是下限」就源于两处不一致。
+    let min_size = PLUGIN_WINDOW_MIN_SIZE;
+
+    let mut builder = tauri::WebviewWindowBuilder::new(
         app,
         &label,
         resolve_webview_target(plugin_id, &manifest.entry)?,
     )
     .title(format!("{} - Dasktop 插件", manifest.name))
     .inner_size(window_size.width, window_size.height)
-    .min_inner_size(PLUGIN_WINDOW_MIN_SIZE.0, PLUGIN_WINDOW_MIN_SIZE.1)
-    .initialization_script(bridge::build_script(plugin_id, &manifest)?)
-    .build()
-    .map_err(|error| format!("插件窗口创建失败：{error}"))?;
+    .min_inner_size(min_size.0, min_size.1)
+    .initialization_script(bridge::build_script(plugin_id, &manifest)?);
+
+    // 被热键唤起且首次建窗时，把「被唤起」意图注入页面：插件页面加载后通过
+    // dasktop.hotkey.onTrigger 读走这个意图，而不必等宿主发事件（页面还没挂监听时事件必丢）。
+    if trigger.is_some() {
+        builder =
+            builder.initialization_script("window.__DASKTOP_HOTKEY_INTENT__ = true;".to_string());
+    }
+
+    let window = builder
+        .build()
+        .map_err(|error| format!("插件窗口创建失败：{error}"))?;
+
+    // 还原记住的窗口位置：有记忆就落到原处；没有记忆则交还系统默认摆位。
+    // 放在 show 之前，避免先闪一下默认位置再跳过去。
+    if let Some((x, y)) = window_preference::resolve_window_position(app, plugin_id).await {
+        if let Err(error) =
+            window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)))
+        {
+            eprintln!("[plugin] 还原插件 {plugin_id} 窗口位置失败：{error}");
+        }
+    }
 
     // 必须挂在「窗口已存在」那条早退路径之后：那里没有新窗口，重复挂载只会让同一个窗口
-    // 攒下多个监听器，每次关闭都写一遍同样的尺寸。
+    // 攒下多个监听器，每次关闭都写一遍同样的尺寸 / 位置。
     window_preference::attach_size_persistence(&window);
+    window_preference::attach_position_persistence(&window);
 
     window
         .show()
@@ -188,7 +218,9 @@ pub async fn open_plugin_window(app: &AppHandle, plugin_id: &str) -> Result<(), 
 
     window
         .set_focus()
-        .map_err(|error| format!("插件窗口聚焦失败：{error}"))
+        .map_err(|error| format!("插件窗口聚焦失败：{error}"))?;
+
+    Ok(())
 }
 
 /// 读取插件包内文本文件，对应 `fs:read` 能力。

@@ -180,5 +180,22 @@
     });
   }
 
+  // 窗口命名空间：无边框插件窗口的自定义标题栏用来发起系统拖动。它不进 CAPABILITY_TABLE，
+  // 因为拖动是 UI 行为而非「能力」——任何插件窗口都能拖自己，无需在 plugin.json 里声明。
+  var windowNamespace = {
+    startDragging: function () {
+      // 拖动必须在 mousedown 同步发起，OS 才会接管。直接调 Tauri 窗口插件的拖动命令，
+      // 授权走 capability（core:window:allow-start-dragging），不占用宿主能力命令清单。
+      // label 取「调用方自己」：插件窗口标签固定为 plugin_<id>，由宿主建窗时写死，
+      // 与 domain/plugin/contract.rs 的 PLUGIN_WINDOW_LABEL_PREFIX 一致，插件改不了，
+      // 因此只可能拖到自己，不存在拖别人窗口的空间。
+      return invoke("plugin:window|start_dragging", {
+        label: "plugin_" + config.id,
+      });
+    },
+  };
+
+  api.window = Object.freeze(windowNamespace);
+
   window.dasktop = Object.freeze(api);
 })();

@@ -50,15 +50,14 @@ export function listPluginHotkeys(): Promise<PluginHotkeyRegistration[]> {
 }
 
 /**
- * 写入或更新某条热键的用户覆盖（生效快捷键 + 是否启用）。
+ * 写入或更新某插件的启动热键配置（生效快捷键 + 是否启用）。
  *
- * 覆盖必须指向真实声明的热键；禁用一条热键时不需要先填合法快捷键。
+ * 配置指向真实安装的插件；禁用或清空快捷键时不需要先填合法快捷键。
  */
 export function setPluginHotkey(
   pluginId: string,
-  hotkeyId: string,
   accelerator: string,
   enabled: boolean,
 ): Promise<void> {
-  return invoke("set_plugin_hotkey", { pluginId, hotkeyId, accelerator, enabled });
+  return invoke("set_plugin_hotkey", { pluginId, accelerator, enabled });
 }

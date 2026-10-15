@@ -34,6 +34,39 @@ struct BridgeConfig<'a> {
 /// 内嵌的能力桥脚本源码。
 const BRIDGE_SOURCE: &str = include_str!("bridge.js");
 
+/// 注入到插件页面的热键命名空间脚本。
+///
+/// 与 `bridge.js` 能力桥正交：启动热键是宿主端配置的声明式行为，不绑定任何能力权限，
+/// 因此不走 `CAPABILITY_TABLE` 那套「方法 → 权限」生成逻辑，而是独立写死这一段。
+///
+/// 它做两件事：暴露 `dasktop.hotkey.onTrigger(cb)` 让插件页面订阅「被启动热键唤起」；
+/// 提供一个内部 `window.__dasktop_fire_hotkey()` 供宿主在窗口已存在时通过 `webview.eval`
+/// 触发（事件在页面未挂监听时会丢，而 eval 直接调用已注册的回调，必然送达）。
+const HOTKEY_BRIDGE_SOURCE: &str = r#"
+(function () {
+  var handlers = [];
+  window.__dasktop_fire_hotkey = function () {
+    for (var i = 0; i < handlers.length; i++) {
+      try { handlers[i](); } catch (e) { console.error('[dasktop.hotkey] handler error', e); }
+    }
+  };
+  window.dasktop = window.dasktop || {};
+  window.dasktop.hotkey = {
+    onTrigger: function (cb) {
+      if (typeof cb !== 'function') return;
+      handlers.push(cb);
+      // 首次被热键唤起时，宿主在初始化脚本里写入 __DASKTOP_HOTKEY_INTENT__；
+      // 这里在订阅时立即补触发一次，让「被热键叫醒」在页面刚加载就生效，
+      // 而不是等到下一次按键（那时窗口已存在、走的是 eval 路径）。
+      if (window.__DASKTOP_HOTKEY_INTENT__) {
+        window.__DASKTOP_HOTKEY_INTENT__ = false;
+        cb();
+      }
+    }
+  };
+})();
+"#;
+
 /// 生成注入用的完整脚本。
 ///
 /// 调用方必须已经确认清单里没有宿主不认识的权限——脚本按声明的权限挂载能力，
@@ -50,7 +83,7 @@ pub fn build_script(plugin_id: &str, manifest: &PluginManifest) -> Result<String
         .map_err(|error| format!("能力桥配置序列化失败：{error}"))?;
 
     Ok(format!(
-        "window.__DASKTOP_BRIDGE__ = {json};\n{BRIDGE_SOURCE}"
+        "window.__DASKTOP_BRIDGE__ = {json};\n{BRIDGE_SOURCE}\n{HOTKEY_BRIDGE_SOURCE}"
     ))
 }
 
@@ -67,7 +100,6 @@ mod tests {
             permissions: permissions.iter().map(|item| item.to_string()).collect(),
             // 测试用的清单不关心窗口尺寸；取值优先级由 window_preference 单独覆盖。
             window: None,
-            hotkeys: vec![],
         }
     }
 

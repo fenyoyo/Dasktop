@@ -15,26 +15,12 @@
 /* -------------------------------------------------------------------------- */
 
 /**
- * 插件窗口形态，由清单 `window.kind` 声明；与热键正交。
+ * 插件窗口形态，由清单 `window.kind` 声明；与启动热键正交。
  *
- * 热键决定「怎么叫醒」，kind 决定「醒来长什么样」，两者可任意组合。
+ * 启动热键由宿主端在设置页为每个插件配置、决定「怎么叫醒」，kind 决定「醒来长什么样」，
+ * 两者可任意组合。
  */
 export type PluginWindowKind = "standard" | "quick";
-
-/**
- * 清单里声明的一条全局热键。
- *
- * 热键是声明式宿主行为，不绑定任何能力权限（见规划 D1）：插件不需要调命令，宿主在
- * 扫描 / 启动时统一注册，因此这里只是数据，不携带命令名。
- */
-export interface PluginHotkey {
-  /** 热键在包内唯一标识，页面靠它从唤起意图里区分「按的是哪一条」。 */
-  id: string;
-  /** 快捷键字符串，形如 `Alt+T`；具体可接受的写法由宿主注册层校验。 */
-  accelerator: string;
-  /** 面向用户的中文说明，设置页与插件页面直接展示。 */
-  title?: string;
-}
 
 /**
  * 单条热键的注册状态，与 Rust `PluginHotkeyStatus` 的序列化取值一一对应。
@@ -42,23 +28,17 @@ export interface PluginHotkey {
 export type PluginHotkeyStatus = "ok" | "systemReserved" | "invalid" | "conflict" | "disabled";
 
 /**
- * 一条热键在设置页里的展示 / 持久化形态，由 `list_plugin_hotkeys` 命令返回。
+ * 一个插件的启动热键在设置页里的展示 / 持久化形态，由 `list_plugin_hotkeys` 命令返回。
  *
- * 它同时承载「插件的声明」「用户的覆盖」与「当前状态」，设置页据此一处渲染，
- * 不必再去三处拼装。
+ * 简化自声明式模型的「多热键」：每插件最多一条启动热键，没有 `hotkeyId` 与 `title`，
+ * `pluginId` 即自解释。设置页据此一处渲染状态与配置，不必再去多源拼装。
  */
 export interface PluginHotkeyRegistration {
-  /** 热键所属插件 id。 */
+  /** 启动热键所属插件 id；也是配置表的主键。 */
   pluginId: string;
-  /** 热键在包内唯一标识。 */
-  hotkeyId: string;
-  /** 面向用户的说明，可能为空。 */
-  title?: string;
-  /** 清单里声明的原始快捷键，设置页用它说明「作者建议是什么」。 */
-  declaredAccelerator: string;
-  /** 实际生效的快捷键：用户没覆盖时用声明的，覆盖后用覆盖的。 */
+  /** 生效快捷键：宿主配置里写下的组合键；未配置时为空串，表示「暂未设定」。 */
   accelerator: string;
-  /** 用户是否启用了这条热键；覆盖成 false 即不注册。 */
+  /** 用户是否启用了这条启动热键；空快捷键或冲突时启用无意义，状态会另行标注。 */
   enabled: boolean;
   /** 当前状态：能不能真正注册上。 */
   status: PluginHotkeyStatus;
@@ -77,8 +57,6 @@ export interface PluginPackageManifest {
   entry: string;
   /** 声明的窗口形态，未声明按 `standard`。 */
   window?: { kind?: PluginWindowKind };
-  /** 声明的全局热键，宿主统一注册。 */
-  hotkeys?: PluginHotkey[];
   id: string;
   name: string;
   permissions: string[];

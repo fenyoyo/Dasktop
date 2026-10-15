@@ -46,7 +46,8 @@ const HTML_REF_PATTERN = /(?:href|src)\s*=\s*["']([^"']*)["']/gi;
 /**
  * 从 JS 里挑出模块引用：`from "./x.js"`、`import "./x.js"`、`import("./x.js")`。
  */
-const JS_REF_PATTERN = /(?:from\s*|import\s*\(?\s*)["']([^"']+)["']/g;
+// 模块说明符不允许跨行：`[^"'\r\n]+` 排除了换行，避免把一段多行代码当成跨行字符串引用。
+const JS_REF_PATTERN = /(?:from\s*|import\s*\(?\s*)["']([^"'\r\n]+)["']/g;
 
 /**
  * 能力桥方法的调用点：`dasktop.net.request(`。
@@ -196,7 +197,7 @@ async function loadWindowSizeLimits() {
     }
   }
 
-  return { height: frontend.height, width: frontend.width };
+  return { height: frontend.height, width: frontend.width, quickMin: backend.quickMin };
 }
 
 async function parseFrontendWindowSize() {
@@ -256,6 +257,7 @@ async function parseBackendWindowSize() {
     default: readPair("PLUGIN_WINDOW_SIZE"),
     max: readPair("PLUGIN_WINDOW_MAX_SIZE"),
     min: readPair("PLUGIN_WINDOW_MIN_SIZE"),
+    quickMin: readPair("PLUGIN_QUICK_WINDOW_MIN_SIZE"),
   };
 }
 
@@ -335,7 +337,6 @@ async function verifyPackage(
   }
 
   verifyWindowPreference(pluginId, manifest.window, windowSizeLimits);
-  verifyHotkeys(pluginId, manifest.hotkeys);
 
   const declared = new Set(manifest.permissions ?? []);
 
@@ -412,6 +413,9 @@ function verifyWindowPreference(pluginId, preference, limits) {
     return;
   }
 
+  // 宿主建窗时对所有插件窗口（含 quick）统一套用 PLUGIN_WINDOW_MIN_SIZE，
+  // 未对 quick 设独立下限；因此 quick 与普通窗口共用同一组边界，避免「清单写了更小值却
+  // 被宿主夹回标准下限」这类静默不一致。上限也共用。
   for (const dimension of ["width", "height"]) {
     const value = preference[dimension];
 
@@ -424,7 +428,8 @@ function verifyWindowPreference(pluginId, preference, limits) {
       continue;
     }
 
-    const { min, max } = limits[dimension];
+    const min = limits[dimension].min;
+    const max = limits[dimension].max;
 
     if (value < min || value > max) {
       fail(
@@ -432,97 +437,6 @@ function verifyWindowPreference(pluginId, preference, limits) {
         `清单的 window.${dimension} 为 ${value}，超出宿主允许范围 ${min}-${max}（宿主会把它夹取到边界）`,
       );
     }
-  }
-}
-
-/**
- * 校验清单里声明的全局热键。
- *
- * 热键是声明式宿主行为，插件不调任何命令，因此这里只检查声明是否「将来能注册」：
- * 包间冲突裁决要等宿主扫描全量插件才能判，不在单包校验范围；但包内重复、
- * 快捷键格式非法这类「自己就能发现」的问题，提交前就该拦下。
- */
-function verifyHotkeys(pluginId, hotkeys) {
-  if (hotkeys === undefined) {
-    return;
-  }
-
-  if (!Array.isArray(hotkeys)) {
-    fail(pluginId, "清单的 hotkeys 必须是一个数组");
-    return;
-  }
-
-  const seen = new Set();
-
-  for (const hotkey of hotkeys) {
-    if (typeof hotkey !== "object" || hotkey === null || Array.isArray(hotkey)) {
-      fail(pluginId, "清单的 hotkeys 中的每一项必须是对象");
-      continue;
-    }
-
-    const id = hotkey.id;
-    if (typeof id !== "string" || id.trim() === "") {
-      fail(pluginId, "热键必须声明非空 id");
-      continue;
-    }
-
-    // 包内唯一不区分大小写：宿主注册期按 id 路由唤起意图，两个只差大小写的 id 会互相覆盖。
-    const lowerId = id.toLowerCase();
-    if (seen.has(lowerId)) {
-      fail(pluginId, `热键 id「${id}」在包内重复（不区分大小写）`);
-      continue;
-    }
-    seen.add(lowerId);
-
-    if (typeof hotkey.accelerator !== "string" || hotkey.accelerator.trim() === "") {
-      fail(pluginId, `热键「${id}」必须声明 accelerator`);
-      continue;
-    }
-    verifyAccelerator(pluginId, id, hotkey.accelerator);
-
-    if (hotkey.title !== undefined && typeof hotkey.title !== "string") {
-      fail(pluginId, `热键「${id}」的 title 必须是字符串`);
-    }
-  }
-}
-
-/**
- * 校验单个快捷键字符串：至少一个修饰键加一个主键，禁止 Win / Super 组合。
- *
- * 与 Rust 侧 `validate_accelerator`、设置页提交时的判定保持同一套规则：任何一处放松，
- * 表现就是「设置页里看着能存、按下却没反应」，而两侧都不会报错。
- */
-function verifyAccelerator(pluginId, hotkeyId, accelerator) {
-  const tokens = accelerator
-    .split("+")
-    .map((token) => token.trim().toLowerCase())
-    .filter((token) => token !== "");
-
-  if (tokens.length < 2) {
-    fail(
-      pluginId,
-      `热键「${hotkeyId}」的快捷键「${accelerator}」必须包含至少一个修饰键和一个主键（例如 Alt+T）`,
-    );
-    return;
-  }
-
-  const modifiers = new Set(["ctrl", "control", "alt", "shift", "meta", "cmd", "command", "option"]);
-  const hasModifier = tokens.some((token) => modifiers.has(token));
-  const hasKey = tokens.some((token) => !modifiers.has(token));
-
-  if (!hasModifier || !hasKey) {
-    fail(
-      pluginId,
-      `热键「${hotkeyId}」的快捷键「${accelerator}」必须包含至少一个修饰键和一个主键（例如 Alt+T）`,
-    );
-    return;
-  }
-
-  if (tokens.includes("super") || tokens.includes("win")) {
-    fail(
-      pluginId,
-      `热键「${hotkeyId}」的快捷键含 Win / Super 键，该组合会被系统保留，无法注册（例如 Alt+T）`,
-    );
   }
 }
 
@@ -674,6 +588,14 @@ async function verifyBridgeUsage(pluginId, packageDir, scriptFiles, declared, br
 
     for (const match of source.matchAll(BRIDGE_CALL_PATTERN)) {
       const method = `${match[1]}.${match[2]}`;
+
+      // 启动热键命名空间（`dasktop.hotkey`）是声明式宿主行为，不绑定任何能力权限，
+      // 它不在 CAPABILITY_TABLE 里，因此跳过权限检查而只计入调用计数。
+      if (match[1] === "hotkey") {
+        checked += 1;
+        continue;
+      }
+
       const permission = bridgeCapabilities.get(method);
 
       checked += 1;

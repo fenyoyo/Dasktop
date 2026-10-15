@@ -28,6 +28,9 @@ pub fn run() {
             Some(vec![services::app::lifecycle::AUTOSTART_LAUNCH_ARGUMENT]),
         ))
         .plugin(tauri_plugin_sql::Builder::default().build())
+        // 全局快捷键插件：插件启动热键的「挂到系统」由注册层消费本插件完成，
+        // 宿主只在 Rust 侧注册，不暴露任何前端命令，因此无需 capability 授权。
+        .plugin(tauri_plugin_global_shortcut::Builder::default().build())
         // 插件页面资源走自定义协议：插件界面是作者自己写的网页，宿主把插件包目录
         // 映射成 `plugin` 协议供插件窗口加载。URL 前缀由 `services::plugin::asset_base_url`
         // 按平台给出（Windows 上是 `http://plugin.localhost`）。
@@ -57,6 +60,18 @@ pub fn run() {
             if !is_silent_autostart {
                 infrastructure::tauri::tray::show_settings_window(app.handle());
             }
+
+            // 启动即注册全部有效启动热键：用户可能从不打开设置页，但热键应从开机就生效。
+            // 此时前端尚未连库，配置表读不到，注册的是「未配置」状态（没有热键）；用户后续的
+            // 配置会经 set_plugin_hotkey 命令再次触发全量重注册。
+            let hotkey_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) =
+                    services::plugin::register_all_plugin_hotkeys(&hotkey_app).await
+                {
+                    eprintln!("[plugin] 启动注册插件热键失败：{error}");
+                }
+            });
 
             Ok(())
         })

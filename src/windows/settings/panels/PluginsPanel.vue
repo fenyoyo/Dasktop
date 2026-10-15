@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, onUnmounted, ref } from "vue";
 import {
   ArrowUpRight,
   Check,
@@ -51,7 +51,7 @@ const emit = defineEmits<{
   pluginWindowSizeChange: [key: PluginWindowSizeSettingKey, value: number];
   pluginWindowSizeReset: [pluginId: string];
   pluginWindowSizeSave: [pluginId: string, width: number, height: number];
-  pluginHotkeySave: [pluginId: string, hotkeyId: string, accelerator: string, enabled: boolean];
+  pluginHotkeySave: [pluginId: string, accelerator: string, enabled: boolean];
   pluginHotkeyReload: [];
 }>();
 
@@ -280,22 +280,146 @@ const pluginNames = computed(() => {
 });
 
 /**
- * 用插件 id 与热键 id 拼出唯一的编辑态键。
- *
- * 单插件可能声明多条热键，纯 pluginId 不足以区分，因此把热键 id 一起编进去；
+ * 编辑态键直接取插件 id：新模型下每插件最多一条启动热键，pluginId 本身即唯一。
  * 直接用对象当 key 会让 Vue 的 `v-if` 比较失去稳定引用。
  */
 function hotkeyKey(hotkey: PluginHotkeyRegistration): string {
-  return `${hotkey.pluginId}/${hotkey.hotkeyId}`;
+  return hotkey.pluginId;
+}
+
+/**
+ * 当前正在编辑的整条热键记录：window 级捕获监听需要它来提交 / 取消，
+ * 因为捕获不依赖输入框焦点，按键可能发生在页面任何位置。
+ */
+let editingHotkey: PluginHotkeyRegistration | null = null;
+
+/** 进入编辑态时挂到 window 上的捕获监听，离开编辑态移除；`onUnmounted` 兜底避免泄漏。 */
+let removeCaptureListener: (() => void) | null = null;
+
+function stopCapturing(): void {
+  removeCaptureListener?.();
+  removeCaptureListener = null;
 }
 
 function startEditingHotkey(hotkey: PluginHotkeyRegistration): void {
+  // 从一行切到另一行改键时，先把前一个编辑态的 window 监听撤掉，避免按键同时写两份草稿。
+  stopCapturing();
   editingHotkeyKey.value = hotkeyKey(hotkey);
+  editingHotkey = hotkey;
   draftAccelerator.value = hotkey.accelerator;
+
+  // 热键是「按下即捕获」，不能依赖输入框获得焦点：它位于 v-for 内、又是只读框，
+  // 某些平台收不到 keydown，聚焦还会因为 v-for 的 ref 被收集成数组而落空，落空就存进空串、
+  // 状态永远停在「未配置快捷键」。直接挂 window 级捕获（捕获阶段），按键无论焦点在哪都被抓到。
+  const handler = (event: KeyboardEvent): void => captureHotkey(event);
+  window.addEventListener("keydown", handler, true);
+  removeCaptureListener = (): void => window.removeEventListener("keydown", handler, true);
+
+  // 仍把焦点给输入框作为回退：极少数平台 window 级捕获拿不到物理键位时，
+  // 聚焦后的输入框 keydown 还能兜底抓一次。用 id 定位，避开 v-for 的 ref 数组陷阱。
+  nextTick(() => document.getElementById("plugin-hotkey-input")?.focus());
+}
+
+/**
+ * 捕获热键时忽略的「裸修饰键」：它们单独按下不组成完整组合键，等主键落下再一起记录。
+ */
+const HOTKEY_MODIFIER_KEYS = new Set(["Control", "Alt", "Shift", "Meta", "Win", "OS"]);
+
+/**
+ * 从按键事件里取出主键名。
+ *
+ * 优先用 `event.code`（物理键位，如 `KeyT` / `Digit1` / `F5`），而不是 `event.key`：
+ * 按住 `Alt` 时 `event.key` 经常被输入法、死键或 AltGr 吞掉 / 改写成奇怪的值，导致
+ * 只捕获到修饰键、主键丢失，结果存进空串、状态停在「未配置快捷键」。物理键位不受这些影响。
+ */
+function keyFromEvent(event: KeyboardEvent): string | null {
+  const code = event.code;
+  if (/^Key[A-Z]$/.test(code)) {
+    return code.slice(3); // KeyT -> T
+  }
+  if (/^Digit[0-9]$/.test(code)) {
+    return code.slice(5); // Digit1 -> 1
+  }
+  if (/^Numpad[0-9]$/.test(code)) {
+    return code.slice(6); // Numpad1 -> 1
+  }
+  if (/^F([1-9]|1[0-2])$/.test(code)) {
+    return code; // F1..F12 原样保留
+  }
+
+  const named: Record<string, string> = {
+    Space: "Space",
+    ArrowUp: "ArrowUp",
+    ArrowDown: "ArrowDown",
+    ArrowLeft: "ArrowLeft",
+    ArrowRight: "ArrowRight",
+    Backspace: "Backspace",
+    Delete: "Delete",
+    Home: "Home",
+    End: "End",
+    PageUp: "PageUp",
+    PageDown: "PageDown",
+  };
+  if (named[code]) {
+    return named[code];
+  }
+
+  // 其它单字符键（符号等）退回 event.key，统一大写保证稳定。
+  if (event.key && event.key.length === 1) {
+    return event.key.toUpperCase();
+  }
+  return null;
+}
+
+/**
+ * 编辑态开启时挂在 window 上捕获用户按下的组合键，构造形如 `Alt+T` / `Ctrl+Alt+T` 的快捷键字符串。
+ *
+ * 必须是「按下即捕获」而不是普通文本输入：快捷键是组合键，用户在普通文本框里敲不出
+ * `Alt+T`（按住 Alt 时浏览器不会往输入框写字），结果就是保存了一个空串、状态始终停在
+ * 「未配置快捷键」。这里在 keydown 里直接读修饰键与主键、拼成字符串，并 `preventDefault`
+ * 挡掉浏览器/系统对组合键的默认响应（如 Alt 拉起菜单），否则捕获到的不会是用户想绑的键。
+ *
+ * 回车提交、Esc 取消：捕获在 window 层完成，因此不依赖输入框获得焦点。
+ */
+function captureHotkey(event: KeyboardEvent): void {
+  // 回车提交、Esc 取消；Tab 不当成主键，直接放过去避免把焦点切换吞掉。
+  if (event.key === "Enter") {
+    if (editingHotkey) {
+      commitHotkey(editingHotkey);
+    }
+    return;
+  }
+  if (event.key === "Escape" || event.key === "Tab") {
+    cancelHotkeyEditing();
+    return;
+  }
+
+  // 单独按下修饰键只是组合键的前奏，此刻还不完整，不能记录。
+  if (HOTKEY_MODIFIER_KEYS.has(event.key)) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const tokens: string[] = [];
+  if (event.ctrlKey) tokens.push("Ctrl");
+  if (event.altKey) tokens.push("Alt");
+  if (event.shiftKey) tokens.push("Shift");
+  if (event.metaKey) tokens.push("Meta");
+
+  const key = keyFromEvent(event);
+  if (key) {
+    tokens.push(key);
+  }
+
+  draftAccelerator.value = tokens.join("+");
 }
 
 function cancelHotkeyEditing(): void {
   editingHotkeyKey.value = null;
+  editingHotkey = null;
+  stopCapturing();
 }
 
 /**
@@ -305,8 +429,11 @@ function cancelHotkeyEditing(): void {
  * 前端不重复实现规则——重复实现的最终归宿是「设置页说能存、按下却没反应」这种分叉。
  */
 function commitHotkey(hotkey: PluginHotkeyRegistration): void {
-  emit("pluginHotkeySave", hotkey.pluginId, hotkey.hotkeyId, draftAccelerator.value.trim(), hotkey.enabled);
+  const value = draftAccelerator.value.trim();
+  emit("pluginHotkeySave", hotkey.pluginId, value, hotkey.enabled);
   editingHotkeyKey.value = null;
+  editingHotkey = null;
+  stopCapturing();
 }
 
 /**
@@ -316,8 +443,21 @@ function commitHotkey(hotkey: PluginHotkeyRegistration): void {
  * 当前声明的 accelerator 作为覆盖值。
  */
 function toggleHotkeyEnabled(hotkey: PluginHotkeyRegistration): void {
-  emit("pluginHotkeySave", hotkey.pluginId, hotkey.hotkeyId, hotkey.accelerator, !hotkey.enabled);
+  emit("pluginHotkeySave", hotkey.pluginId, hotkey.accelerator, !hotkey.enabled);
 }
+
+/**
+ * 清除已配置的启动热键：把 accelerator 置空，让插件回到「未配置快捷键」。
+ *
+ * 只清快捷键本身、不动启用开关：禁用与清除是两件事（禁用是「有键但先不用」，
+ * 清除是「不配键」），这里只表达后者。
+ */
+function clearHotkey(hotkey: PluginHotkeyRegistration): void {
+  emit("pluginHotkeySave", hotkey.pluginId, "", hotkey.enabled);
+}
+
+// 组件卸载时撤掉可能残留的捕获监听，避免泄漏到其它面板。
+onUnmounted(stopCapturing);
 </script>
 
 <template>
@@ -561,7 +701,7 @@ function toggleHotkeyEnabled(hotkey: PluginHotkeyRegistration): void {
 
     <SettingGroup class="mt-4">
       <SettingRow
-        :description="`所有插件声明的全局热键集中在此，可禁用或改键；能否真正唤起取决于系统注册结果`"
+        :description="`为每个已安装插件配置一个启动热键；能否真正唤起取决于系统注册结果`"
         :divided="runtime.hotkeys.length > 0"
         title="快捷键"
       >
@@ -580,7 +720,7 @@ function toggleHotkeyEnabled(hotkey: PluginHotkeyRegistration): void {
       >
         <template #description>
           <p class="mt-1.5 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">
-            {{ hotkey.title || hotkey.hotkeyId }}
+            启动热键
           </p>
           <p
             v-if="hotkey.status !== 'ok'"
@@ -601,14 +741,18 @@ function toggleHotkeyEnabled(hotkey: PluginHotkeyRegistration): void {
 
           <template v-if="editingHotkeyKey === hotkeyKey(hotkey)">
             <input
-              v-model="draftAccelerator"
+              id="plugin-hotkey-input"
+              :value="draftAccelerator"
               aria-label="热键快捷键"
               :class="TEXT_INPUT_CLASS"
-              placeholder="Alt+T"
+              placeholder="按下组合键…"
+              readonly
               type="text"
-              @keydown.enter="commitHotkey(hotkey)"
-              @keydown.esc="cancelHotkeyEditing"
+              @keydown="captureHotkey"
             />
+            <span class="text-[11px] leading-5 text-[#9aa0ac] dark:text-[#7c828d]">
+              按下要绑定的组合键
+            </span>
             <button
               :class="ICON_BUTTON_CLASS"
               title="保存快捷键"
@@ -640,16 +784,26 @@ function toggleHotkeyEnabled(hotkey: PluginHotkeyRegistration): void {
               <Pencil :size="13" />
               改键
             </button>
+            <button
+              v-if="hotkey.accelerator"
+              :class="SECONDARY_BUTTON_CLASS"
+              title="清除这条热键"
+              type="button"
+              @click="clearHotkey(hotkey)"
+            >
+              <X :size="13" />
+              清除
+            </button>
           </template>
         </div>
       </SettingRow>
 
       <div v-if="runtime.hotkeys.length === 0" class="px-5 py-10 text-center">
         <p class="text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">
-          还没有插件声明热键
+          还没有已安装的插件
         </p>
         <p class="mt-1 text-[12px] text-[#707684] dark:text-[#9ca0aa]">
-          插件在清单里写上 hotkeys 后，这里会列出它们的全局快捷键
+          安装插件后，这里会列出每个插件可配置的启动热键
         </p>
       </div>
     </SettingGroup>

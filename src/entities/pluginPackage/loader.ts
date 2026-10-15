@@ -224,18 +224,17 @@ function describeError(error: unknown): string {
 }
 
 /**
- * 保存某条热键的用户覆盖（生效快捷键 + 是否启用），保存后重新拉取注册状态刷新面板。
+ * 保存某个插件的启动热键配置（生效快捷键 + 是否启用），保存后重新拉取注册状态刷新面板。
  *
- * 覆盖写库由宿主命令完成，前端不直连表；重拉一次是为了让冲突 / 非法状态立刻反映出来，
+ * 配置写库由宿主命令完成，前端不直连表；重拉一次是为了让冲突 / 非法状态立刻反映出来，
  * 而不是停留在用户刚点保存那一刻的旧快照上。
  */
 export async function savePluginHotkey(
   pluginId: string,
-  hotkeyId: string,
   accelerator: string,
   enabled: boolean,
 ): Promise<void> {
-  await setPluginHotkey(pluginId, hotkeyId, accelerator, enabled);
+  await setPluginHotkey(pluginId, accelerator, enabled);
   await reloadPluginHotkeys();
 }
 
