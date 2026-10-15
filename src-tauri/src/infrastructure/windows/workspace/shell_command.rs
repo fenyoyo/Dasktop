@@ -52,13 +52,74 @@ pub(crate) fn run_shell_command(_command: &str) -> Result<String, String> {
     Err("工作区仅支持 Windows 平台".to_owned())
 }
 
-/// 合并标准输出与标准错误，截取末尾片段并去除首尾空白。
+/// 解码子进程输出。
 ///
-/// cmd.exe 按系统代码页输出，非 ASCII 字符可能无法解码，
-/// 这里用 lossy 转换保证不会因为编码问题丢掉整条结果。
+/// 分两档尝试，因为同一条命令的两个来源写出的编码并不一致：
+/// - 现代 CLI（docker、git 等）直接按 UTF-8 写管道，严格 UTF-8 解码即可命中；
+/// - cmd 自身及系统内置工具（ping、ipconfig 等）按控制台代码页写字节，
+///   简体中文 Windows 下是 936（GBK），若按 UTF-8 解会整段变成乱码，
+///   因此校验失败时退回系统 OEM 代码页解码。
+fn decode_output(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_owned();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        windows_impl::decode_with_oem_code_page(bytes)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+/// Windows 平台专属实现：把按系统代码页写出的字节转换为字符串。
+#[cfg(target_os = "windows")]
+mod windows_impl {
+    use windows::Win32::Globalization::{
+        MultiByteToWideChar, CP_OEMCP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS,
+    };
+
+    /// 按系统 OEM 代码页解码字节。
+    ///
+    /// 简体中文 Windows 的 OEM 代码页是 936，与 cmd 默认控制台的输出代码页一致。
+    /// 非法字节会被替换为 U+FFFD 而不是整体失败，因此不需要额外错误分支，
+    /// 只有连一次转换都做不成时才退回到 lossy 解码兜底。
+    pub(super) fn decode_with_oem_code_page(bytes: &[u8]) -> String {
+        if bytes.is_empty() {
+            return String::new();
+        }
+
+        // 先只探测目标缓冲需要的宽字符数量：此时不传输出缓冲，返回 0 表示无法解码。
+        let required_length =
+            unsafe { MultiByteToWideChar(CP_OEMCP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), bytes, None) };
+        if required_length <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+
+        let mut buffer = vec![0_u16; required_length as usize];
+        let written_length = unsafe {
+            MultiByteToWideChar(
+                CP_OEMCP,
+                MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0),
+                bytes,
+                Some(&mut buffer),
+            )
+        };
+        if written_length <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+
+        String::from_utf16_lossy(&buffer[..written_length as usize])
+    }
+}
+
+/// 合并标准输出与标准错误，截取末尾片段并去除首尾空白。
 fn combine_output(stdout: &[u8], stderr: &[u8]) -> String {
-    let stdout_text = String::from_utf8_lossy(stdout).trim().to_owned();
-    let stderr_text = String::from_utf8_lossy(stderr).trim().to_owned();
+    let stdout_text = decode_output(stdout).trim().to_owned();
+    let stderr_text = decode_output(stderr).trim().to_owned();
 
     let combined = match (stdout_text.is_empty(), stderr_text.is_empty()) {
         (true, true) => String::new(),
@@ -80,4 +141,28 @@ fn tail_of(text: &str) -> String {
     text.chars()
         .skip(character_count - COMMAND_OUTPUT_LIMIT)
         .collect()
+}
+
+/// 输出解码覆盖两类编码，判断错误会让中文提示直接变成乱码。
+#[cfg(test)]
+mod tests {
+    use super::decode_output;
+
+    /// 现代 CLI 的 UTF-8 输出必须原样保留，不能被代码页回退改写。
+    #[test]
+    fn keeps_utf8_output_intact() {
+        assert_eq!(
+            decode_output("container mysql started".as_bytes()),
+            "container mysql started"
+        );
+    }
+
+    /// cmd 内置工具的中文输出按 936 写字节，必须走代码页回退才能还原。
+    #[test]
+    fn decodes_oem_code_page_output() {
+        // 「中文」的 GBK 编码，字节序列不是合法 UTF-8，会落到回退分支。
+        let oem_bytes = [0xD6, 0xD0, 0xCE, 0xC4];
+
+        assert_eq!(decode_output(&oem_bytes), "中文");
+    }
 }

@@ -49,6 +49,8 @@ tauri-plugin-autostart = "~2.5.1"
 tauri-plugin-sql = { version = "~2.4.0", features = ["sqlite"] }
 windows = { version = "0.61.3", features = [
   "Win32_Foundation",
+  # 工作区附加命令的输出按控制台代码页写出，需要 MultiByteToWideChar 做解码回退
+  "Win32_Globalization",
   "Win32_Graphics_Gdi",
   "Win32_Storage_FileSystem",
   "Win32_Security",
