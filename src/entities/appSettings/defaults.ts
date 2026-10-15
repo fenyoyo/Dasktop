@@ -1,4 +1,10 @@
 import type { DesktopNameDisplayMode } from "@/entities/desktopItem/types";
+// 插件窗口的默认宽高与允许范围属于插件领域的约定，这里引用它而不是再抄一份字面量：
+// 设置页滑块的可选范围与宿主建窗时的取值边界必须是同一个数，抄第二遍迟早会漂移。
+import {
+  PLUGIN_WINDOW_DEFAULT_SIZE,
+  PLUGIN_WINDOW_SIZE_LIMITS,
+} from "@/entities/pluginPackage/types";
 import type {
   AppSettings,
   BoxConflictPolicy,
@@ -31,6 +37,9 @@ export const APP_SETTINGS_STORAGE = {
     boxItemOrders: "box_item_orders",
     boxVirtualItems: "box_virtual_items",
     boxes: "boxes",
+    // 与 Rust `domain/app/settings.rs` 的 tables::PLUGIN_WINDOW_SIZES 同名：
+    // 两侧分别负责读写同一张表（宿主在窗口关闭时写回，设置页负责展示与重置）。
+    pluginWindowSizes: "plugin_window_sizes",
     shellIconVisibilityRecords: "shell_icon_visibility_records",
     workspaces: "workspaces",
   },
@@ -60,6 +69,8 @@ export const APP_SETTING_KEYS = {
   collectionRootPath: "collectionRootPath",
   doubleClickOpenItems: "doubleClickOpenItems",
   nameDisplayMode: "nameDisplayMode",
+  pluginWindowHeight: "pluginWindowHeight",
+  pluginWindowWidth: "pluginWindowWidth",
   settingsTheme: "settingsTheme",
   autoHideNativeShellIcons: "autoHideNativeShellIcons",
   showItemLabels: "showItemLabels",
@@ -98,6 +109,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   boxIconGapY: 4,
   boxFilenameWidth: 82,
   boxCornerRadius: 8,
+  pluginWindowWidth: PLUGIN_WINDOW_DEFAULT_SIZE.width,
+  pluginWindowHeight: PLUGIN_WINDOW_DEFAULT_SIZE.height,
 };
 
 /**
@@ -116,6 +129,8 @@ export const APP_SETTING_NUMBER_LIMITS = {
   boxIconSize: { min: 28, max: 96, step: 1, unit: "px" },
   boxLabelTextSize: { min: 9, max: 16, step: 0.5, unit: "px" },
   snapThreshold: { min: 8, max: 64, step: 1, unit: "px" },
+  pluginWindowHeight: PLUGIN_WINDOW_SIZE_LIMITS.height,
+  pluginWindowWidth: PLUGIN_WINDOW_SIZE_LIMITS.width,
 } as const satisfies Record<
   AppSettingNumberKey,
   {

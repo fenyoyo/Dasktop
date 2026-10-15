@@ -126,5 +126,13 @@ export interface AppSettings {
    * Box 面板和图标命中区域的圆角，保持桌面组件视觉一致
    */
   boxCornerRadius: number;
+  /**
+   * 插件窗口默认宽度，单位为逻辑像素；单个插件记住了自身尺寸时不使用
+   */
+  pluginWindowWidth: number;
+  /**
+   * 插件窗口默认高度，单位为逻辑像素；单个插件记住了自身尺寸时不使用
+   */
+  pluginWindowHeight: number;
 }
 import type { DesktopNameDisplayMode } from "@/entities/desktopItem/types";

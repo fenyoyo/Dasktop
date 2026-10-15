@@ -185,8 +185,12 @@ function changeActiveSection(section: SettingsSection): void {
                   v-else-if="activeSection === 'plugins'"
                   :panel-width="SETTINGS_PANEL_WIDTH.default"
                   :runtime="settingsPlugins.runtime.value"
+                  :settings="desktopStore.settings"
                   @open-root="settingsPlugins.openPluginsRoot"
                   @open-page="settingsPlugins.openPluginPage"
+                  @plugin-window-size-change="desktopStore.updateNumberSetting"
+                  @plugin-window-size-reset="settingsPlugins.resetPluginWindowSize"
+                  @plugin-window-size-save="settingsPlugins.savePluginWindowSize"
                   @reload="settingsPlugins.reloadPlugins"
                 />
                 <AboutPanel

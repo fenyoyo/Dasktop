@@ -6,8 +6,9 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::domain::plugin::{
-    PluginManifest, PluginPackageRecord, PluginScanResult, SamplePackage, PLUGIN_ASSET_MAX_BYTES,
-    PLUGIN_DATA_MAX_BYTES, PLUGIN_ID_MAX_LENGTH, PLUGIN_MANIFEST_FILE_NAME, SAMPLE_PACKAGES,
+    PluginManifest, PluginPackageRecord, PluginScanResult, PluginWindowSizeView, SamplePackage,
+    PLUGIN_ASSET_MAX_BYTES, PLUGIN_DATA_MAX_BYTES, PLUGIN_ID_MAX_LENGTH, PLUGIN_MANIFEST_FILE_NAME,
+    SAMPLE_PACKAGES,
 };
 
 /// 目录扫描时跳过的宿主自用目录首字符集合。
@@ -291,6 +292,7 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
                 directory_path,
                 manifest: None,
                 error: Some(error),
+                window_size: PluginWindowSizeView::global_default(),
             }
         }
     };
@@ -304,7 +306,8 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
                 "清单 id `{}` 与插件包目录名 `{directory_name}` 不一致",
                 manifest.id
             )),
-        };
+            window_size: PluginWindowSizeView::global_default(),
+            };
     }
 
     // 入口页面必须真实存在。拦在扫描期而不是等用户点开插件窗口：那时只会看到一片
@@ -317,6 +320,7 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
                 directory_path,
                 manifest: None,
                 error: Some(format!("入口页面不存在：{}", manifest.entry)),
+                window_size: PluginWindowSizeView::global_default(),
             }
         }
         Err(message) => {
@@ -325,6 +329,7 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
                 directory_path,
                 manifest: None,
                 error: Some(format!("入口页面路径非法：{message}")),
+                window_size: PluginWindowSizeView::global_default(),
             }
         }
     }
@@ -334,6 +339,7 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
         directory_path,
         manifest: Some(manifest),
         error: None,
+        window_size: PluginWindowSizeView::global_default(),
     }
 }
 

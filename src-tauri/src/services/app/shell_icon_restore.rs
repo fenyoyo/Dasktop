@@ -1,10 +1,10 @@
 //! 应用退出前的系统桌面图标恢复流程，集中处理 SQLite 记录和 Windows 图标状态回写。
 
 use crate::domain::app::settings;
+use crate::infrastructure::database;
 use crate::infrastructure::windows::shell_desktop_icon;
 use sqlx::{Executor, Row, SqlitePool};
-use tauri::{AppHandle, Manager};
-use tauri_plugin_sql::{DbInstances, DbPool};
+use tauri::AppHandle;
 
 const SHELL_ID_COLUMN: &str = "shell_id";
 const PREVIOUS_VISIBLE_COLUMN: &str = "previous_visible";
@@ -24,7 +24,7 @@ pub fn restore_shell_desktop_icons_before_exit(app: &AppHandle) -> Result<(), St
 }
 
 async fn restore_shell_desktop_icons_before_exit_async(app: &AppHandle) -> Result<(), String> {
-    let Some(pool) = resolve_app_sqlite_pool(app).await? else {
+    let Some(pool) = database::resolve_app_sqlite_pool(app).await? else {
         return Ok(());
     };
     ensure_shell_icon_visibility_record_storage(&pool).await?;
@@ -42,17 +42,6 @@ async fn restore_shell_desktop_icons_before_exit_async(app: &AppHandle) -> Resul
     } else {
         Err(errors.join("; "))
     }
-}
-
-async fn resolve_app_sqlite_pool(app: &AppHandle) -> Result<Option<SqlitePool>, String> {
-    let db_instances = app.state::<DbInstances>();
-    let instances = db_instances.0.read().await;
-    let Some(db_pool) = instances.get(settings::APP_DATABASE_URL) else {
-        return Ok(None);
-    };
-
-    let DbPool::Sqlite(pool) = db_pool;
-    Ok(Some(pool.clone()))
 }
 
 async fn ensure_shell_icon_visibility_record_storage(pool: &SqlitePool) -> Result<(), String> {

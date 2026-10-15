@@ -18,9 +18,13 @@
 //!
 //! 宿主自己的审计日志走 [`append_log`]，**不再要求插件声明 `log:write`**：那是宿主在
 //! 记账，不是插件在调能力，要求声明会把「能上网」和「能写日志」这两件事绑在一起。
+//!
+//! 插件窗口开多大由 [`window_preference`] 决定：它是「用户记住的尺寸 > 清单声明 >
+//! 全局默认」三级优先级的唯一实现处，并且在窗口关闭时把最后尺寸写回 SQLite。
 
 mod bridge;
 mod protocol;
+mod window_preference;
 
 pub use protocol::handle_plugin_asset_request;
 
@@ -35,7 +39,7 @@ use crate::domain::plugin::{
     PLUGIN_PERMISSION_CLIPBOARD_READ, PLUGIN_PERMISSION_CLIPBOARD_WRITE, PLUGIN_PERMISSION_FS_READ,
     PLUGIN_PERMISSION_FS_WRITE, PLUGIN_PERMISSION_LOG_WRITE, PLUGIN_PERMISSION_NET_REQUEST,
     PLUGIN_PERMISSION_UI_NOTIFY, PLUGIN_PROTOCOL_SCHEME, PLUGIN_ROOT_DIR_NAME,
-    PLUGIN_WINDOW_LABEL_PREFIX, PLUGIN_WINDOW_MIN_SIZE, PLUGIN_WINDOW_SIZE,
+    PLUGIN_WINDOW_LABEL_PREFIX, PLUGIN_WINDOW_MIN_SIZE,
 };
 use crate::infrastructure::filesystem::{plugin_log, plugin_package};
 use crate::infrastructure::http;
@@ -56,15 +60,26 @@ pub struct PluginNotificationPayload {
     pub created_at: u64,
 }
 
-/// 扫描全部插件包。
+/// 扫描全部插件包，并给每个包算好它的生效窗口尺寸。
 ///
 /// 首次运行时插件根目录不存在会先被创建并补写内置示例包，让「插件」设置页在全新安装后
 /// 就有可展示的内容，而不是一个空目录加一句无从下手的提示。
-pub fn scan_plugin_packages(app: &AppHandle) -> Result<PluginScanResult, String> {
+///
+/// 尺寸要在这里一并返回而不是让前端自己算：已知来源有三处（插件级记录、清单声明、全局
+/// 默认），而前两处只有宿主拿得到（一个在 SQLite，一个在清单里，前端读清单要走额外命令）。
+pub async fn scan_plugin_packages(app: &AppHandle) -> Result<PluginScanResult, String> {
     let root = resolve_plugin_root(app)?;
     plugin_package::seed_sample_package_if_empty(&root)?;
 
-    plugin_package::scan_packages(&root)
+    let mut result = plugin_package::scan_packages(&root)?;
+
+    for package in &mut result.packages {
+        package.window_size =
+            window_preference::resolve_window_size(app, &package.id, package.manifest.as_ref())
+                .await;
+    }
+
+    Ok(result)
 }
 
 /// 插件页面资源的 URL 前缀，按平台给出。
@@ -144,17 +159,26 @@ pub async fn open_plugin_window(app: &AppHandle, plugin_id: &str) -> Result<(), 
     ensure_known_permissions(plugin_id, &manifest)?;
     ensure_entry_page(&package_dir, &manifest)?;
 
+    // 尺寸在开窗前一次性定下来：窗口已经存在时不重新设置大小——用户在插件页面里可能
+    // 已经拖着自己要的尺寸，重载他调整过的值只会让人以为「拖了没记住」。
+    let window_size =
+        window_preference::resolve_window_size(app, plugin_id, Some(&manifest)).await;
+
     let window = tauri::WebviewWindowBuilder::new(
         app,
         &label,
         resolve_webview_target(plugin_id, &manifest.entry)?,
     )
     .title(format!("{} - Dasktop 插件", manifest.name))
-    .inner_size(PLUGIN_WINDOW_SIZE.0, PLUGIN_WINDOW_SIZE.1)
+    .inner_size(window_size.width, window_size.height)
     .min_inner_size(PLUGIN_WINDOW_MIN_SIZE.0, PLUGIN_WINDOW_MIN_SIZE.1)
     .initialization_script(bridge::build_script(plugin_id, &manifest)?)
     .build()
     .map_err(|error| format!("插件窗口创建失败：{error}"))?;
+
+    // 必须挂在「窗口已存在」那条早退路径之后：那里没有新窗口，重复挂载只会让同一个窗口
+    // 攒下多个监听器，每次关闭都写一遍同样的尺寸。
+    window_preference::attach_size_persistence(&window);
 
     window
         .show()

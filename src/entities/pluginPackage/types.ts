@@ -30,6 +30,67 @@ export interface PluginPackageManifest {
 }
 
 /**
+ * 插件窗口尺寸，单位为逻辑像素（与宿主 Rust 侧同一口径）。
+ */
+export interface PluginWindowSize {
+  height: number;
+  width: number;
+}
+
+/**
+ * 生效尺寸的来源，与 Rust `PluginWindowSizeSource` 的序列化取值一一对应。
+ *
+ * 清单 `window` 字段本身不出现在前端类型里：那一层由宿主读清单时消费，
+ * 前端拿到的已经是收敛后的结果，不需要也无从复现它的判定。
+ */
+export type PluginWindowSizeSource = "custom" | "declared" | "global";
+
+/**
+ * 宿主为单个插件算好的生效窗口尺寸。
+ *
+ * 尺寸由宿主按「用户记住的尺寸 > 清单声明 > 全局默认」收敛并夹取后下发，前端只负责
+ * 展示；前端自己再算一遍会让面板上的数字与真实开窗尺寸悄悄分叉，而两侧都不报错。
+ */
+export interface PluginWindowSizeView extends PluginWindowSize {
+  /** 这个尺寸是从哪一级取到的，面板据此说明「为什么是这个值」。 */
+  source: PluginWindowSizeSource;
+}
+
+/**
+ * 尺寸来源的展示文案。
+ *
+ * 与上面的联合类型同处一个文件：宿主新增来源而这里没收到的情况会被类型系统拦下，
+ * 而不是渲染出一个空的说明行。
+ */
+export const PLUGIN_WINDOW_SIZE_SOURCE_LABELS: Record<PluginWindowSizeSource, string> = {
+  custom: "已记住该插件的尺寸",
+  declared: "来自插件清单声明",
+  global: "使用全局默认值",
+};
+
+/**
+ * 插件窗口尺寸的允许范围。
+ *
+ * 与 Rust `domain/plugin/contract.rs` 的 `PLUGIN_WINDOW_MIN_SIZE` / `PLUGIN_WINDOW_MAX_SIZE`
+ * 必须逐项一致，`scripts/verify-plugins.mjs` 会比对两边：下限一旦漂移，宿主建窗时传给
+ * WebView 的下限与设置页允许输入的最小值就对不上，用户会得到「配了 300 却仍是 420」。
+ */
+export const PLUGIN_WINDOW_SIZE_LIMITS = {
+  height: { max: 2560, min: 360, step: 10, unit: "px" },
+  width: { max: 2560, min: 420, step: 10, unit: "px" },
+} as const;
+
+/**
+ * 宿主的兜底窗口尺寸，与 Rust `PLUGIN_WINDOW_SIZE` 一致。
+ *
+ * 它同时也是设置页那两个全局默认值滑块/输入框的初始值。
+ */
+export const PLUGIN_WINDOW_DEFAULT_SIZE: PluginWindowSize = {
+  height: 640,
+  width: 560,
+};
+
+/**
  * 扫描结果中的单个插件包记录。
  *
  * 清单损坏的包同样会返回，此时 `manifest` 为 null 且 `error` 说明原因，
@@ -40,6 +101,8 @@ export interface PluginPackageRecord {
   error: string | null;
   id: string;
   manifest: PluginPackageManifest | null;
+  /** 宿主算好的生效窗口尺寸，随扫描结果下发。 */
+  windowSize: PluginWindowSizeView;
 }
 
 /**
@@ -128,6 +191,8 @@ export interface PluginRuntimeRecord {
   unknownPermissions: readonly string[];
   /** 插件版本号，清单不可用时为空字符串。 */
   version: string;
+  /** 宿主算好的生效窗口尺寸，面板直接展示，不自行推导。 */
+  windowSize: PluginWindowSizeView;
 }
 
 /**

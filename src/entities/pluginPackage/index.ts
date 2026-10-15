@@ -17,6 +17,8 @@ export {
   initializePluginRuntime,
   pluginRuntime,
   reloadPluginRuntime,
+  resetPluginWindowSize,
+  savePluginWindowSize,
 } from "./loader";
 
 export { closePluginWindow, PLUGIN_WINDOW_LABEL_PREFIX, pluginWindowLabel } from "./window";
@@ -34,6 +36,9 @@ export {
 export {
   PLUGIN_NOTIFICATION_LIMIT,
   PLUGIN_PERMISSIONS,
+  PLUGIN_WINDOW_DEFAULT_SIZE,
+  PLUGIN_WINDOW_SIZE_LIMITS,
+  PLUGIN_WINDOW_SIZE_SOURCE_LABELS,
   type PluginNotificationPayload,
   type PluginPackageManifest,
   type PluginPackageRecord,
@@ -42,4 +47,7 @@ export {
   type PluginRuntimeSnapshot,
   type PluginRuntimeStatus,
   type PluginScanResult,
+  type PluginWindowSize,
+  type PluginWindowSizeSource,
+  type PluginWindowSizeView,
 } from "./types";

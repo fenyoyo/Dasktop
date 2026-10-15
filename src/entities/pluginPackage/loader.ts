@@ -1,5 +1,9 @@
 import { readonly, shallowRef } from "vue";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import {
+  deletePluginWindowSize,
+  savePluginWindowSize as persistPluginWindowSize,
+} from "@/shared/storage/database";
 import { listenPluginNotification } from "@/shared/ipc/pluginPackage";
 import { listPlugins } from "./api";
 import { resolvePluginPermissions } from "./permissions";
@@ -9,6 +13,7 @@ import {
   type PluginPackageRecord,
   type PluginRuntimeRecord,
   type PluginRuntimeSnapshot,
+  type PluginWindowSize,
 } from "./types";
 
 /**
@@ -72,6 +77,34 @@ export async function reloadPluginRuntime(): Promise<void> {
 }
 
 /**
+ * 记住某个插件的窗口尺寸。
+ *
+ * 宿主在插件窗口关闭时也会写同一张表，因此这里的写入与「用户自己拖出来的尺寸」是同一份
+ * 数据：设置页改完立刻生效，下次开窗就用它（正在开着的窗口不会被改动，那是用户此刻正在
+ * 调整的尺寸）。
+ *
+ * 写完重新扫描一次而不是本地改快照：面板上显示的尺寸是宿主算出来的（夹取过、带来源），
+ * 前端本地拼一个值就等于又实现了一遍尺寸规则。
+ */
+export async function savePluginWindowSize(
+  pluginId: string,
+  size: PluginWindowSize,
+): Promise<void> {
+  await persistPluginWindowSize(pluginId, size);
+
+  await reloadPluginRuntime();
+}
+
+/**
+ * 忘掉某个插件记住的窗口尺寸，让它回到清单声明或全局默认值。
+ */
+export async function resetPluginWindowSize(pluginId: string): Promise<void> {
+  await deletePluginWindowSize(pluginId);
+
+  await reloadPluginRuntime();
+}
+
+/**
  * 释放宿主级订阅，供应用级收尾与开发热更新使用。
  *
  * 热更新会重新执行本模块，旧模块持有的监听器会继续追加到已被替换的快照上。
@@ -103,10 +136,15 @@ async function scanPluginPackages(): Promise<void> {
   try {
     await ensureNotificationListener();
 
+    // 生效窗口尺寸由宿主在扫描时一并算好（含夹取与来源），前端不再自己推导。
     const scan = await listPlugins();
-    const records = scan.packages.map(describePackage);
 
-    updateSnapshot({ error: null, loading: false, records, rootPath: scan.rootPath });
+    updateSnapshot({
+      error: null,
+      loading: false,
+      records: scan.packages.map(describePackage),
+      rootPath: scan.rootPath,
+    });
   } catch (error) {
     updateSnapshot({ error: describeError(error), loading: false });
   }
@@ -128,6 +166,7 @@ function describePackage(packageRecord: PluginPackageRecord): PluginRuntimeRecor
     status: "failed",
     unknownPermissions: [],
     version: packageRecord.manifest?.version ?? "",
+    windowSize: packageRecord.windowSize,
   };
 
   if (!packageRecord.manifest) {

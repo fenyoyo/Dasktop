@@ -155,11 +155,40 @@ DOM」，页面模式下这个前提消失了。现在的「桥」在 Rust 侧�
 | `version` | 插件版本号 |
 | `entry` | 入口页面相对路径，只允许包内相对路径，且文件必须真实存在 |
 | `permissions` | 声明需要的能力列表（见「权限与能力」） |
+| `window` | 可选。作者建议的窗口尺寸 `{ "width": 720, "height": 680 }`，取值规则见下 |
 
 `entry` 指向的文件在**扫描阶段**就会校验存在性：少了这道校验，包能正常显示在设置页里，
 直到用户点开窗口才看到一片空白，那时很难联想到是清单里文件名写错了。
 
 `permissions` 同理在扫描阶段预检：出现宿主不认识的权限，整包记为「不可用」并列出该项。
+
+### 窗口尺寸：三级优先级
+
+插件窗口最后有多大，是三个来源按序收敛的结果：
+
+| 优先级 | 来源 | 存放位置 |
+|---|---|---|
+| 1 | **用户为该插件记住的尺寸** | SQLite `plugin_window_sizes` 表，主键 `plugin_id` |
+| 2 | **清单里作者声明的 `window`** | 插件包的 `plugin.json` |
+| 3 | **宿主的全局默认值** | SQLite `app_settings` 表的 `pluginWindowWidth` / `pluginWindowHeight` |
+
+三条约定：
+
+- **全局默认必须排在清单之后**。它始终有值（默认 560×640），一旦让它盖在清单之上，
+  作者声明的尺寸就永远不生效，而现象是「宿主没读我的清单」，很难想到是顺序问题。
+- **宽高各自独立回落**。`window` 可以只写 `width`，没写的那一维用全局默认值补上，
+  不会因为少写一项就把整段声明丢掉。
+- **越界值一律夹取到允许范围**（当前 420×360 至 2560×2560）而不是报错。尺寸不属于权限，
+  一个写大了的数字不需要让整个插件变成不可用。设置页输入、清单声明、窗口写回三条路径
+  都过同一套夹取规则，它只在 Rust 侧实现一次（`domain/plugin/window_size.rs`）；
+  扫描结果里带回的 `windowSize` 就是收敛后的值，设置页直接展示，不再自行推导。
+  设置页输入框的可选范围常量仍有一份前端副本，由 `pnpm verify:plugins` 与 Rust 常量比对。
+
+用户没有从设置页设置、也没有拖过窗口时，第 1 级不存在，窗口按清单声明或全局默认打开；
+**窗口一旦被手动调整，关闭时最后尺寸会被写回第 1 级**（逻辑像素，最大化状态不记录），
+此后这个插件就不再受清单与全局默认值影响，直到用户在设置页里点「重置」。
+写入由宿主 Rust 侧在 `CloseRequested` 时完成，不走 IPC，因此 Tauri 的能力清单与
+这套机制无关。
 
 ### 入口文件的约定：宿主只加载 HTML，**不加载 JS**
 
@@ -351,10 +380,13 @@ pub fn resolve_caller_plugin_id(window_label: &str, claimed_plugin_id: &str) -> 
    └─► openPluginWindow(pluginId)  ──IPC──►  open_plugin_window（Rust）
        ├─► id 校验 → 建窗标签 label = plugin_<id>
        ├─► 该窗口已存在 → unminimize + show + set_focus，**不重新导航**
-       └─► 不存在 → 读清单 → 预检权限与入口 → WebviewWindowBuilder
-           ├─ 目标 URL = plugin 协议 + /<id>/<entry>
-           ├─ 注入初始化脚本 = 配置行 + bridge.js
-           └─ build()
+       └─► 不存在 → 读清单 → 预检权限与入口 → 解析窗口尺寸
+           ├─ 记忆尺寸（plugin_window_sizes）→ 清单 window → 全局默认设置
+           └─ WebviewWindowBuilder
+              ├─ 目标 URL = plugin 协议 + /<id>/<entry>
+              ├─ 注入初始化脚本 = 配置行 + bridge.js
+              ├─ build() → 挂 CloseRequested 监听：把最后尺寸写回 plugin_window_sizes
+              └─ show + set_focus
 ```
 
 关键点：

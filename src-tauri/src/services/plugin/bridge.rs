@@ -65,6 +65,8 @@ mod tests {
             version: "1.0.0".to_string(),
             entry: "index.html".to_string(),
             permissions: permissions.iter().map(|item| item.to_string()).collect(),
+            // 测试用的清单不关心窗口尺寸；取值优先级由 window_preference 单独覆盖。
+            window: None,
         }
     }
 

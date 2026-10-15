@@ -15,12 +15,15 @@ use tauri::{AppHandle, Window};
 use crate::domain::plugin::{PluginHttpRequest, PluginHttpResponse, PluginScanResult};
 use crate::services::plugin;
 
-/// 扫描插件根目录，返回全部插件包的清单与解析失败原因。
+/// 扫描插件根目录，返回全部插件包的清单、解析失败原因与各自的生效窗口尺寸。
 ///
 /// 首次调用会创建插件根目录并在其为空时写入内置示例包。
+///
+/// **声明为 `async` 是因为扫描要读 SQLite**：每个插件的生效尺寸来自数据库里的插件级
+/// 记录与全局默认设置，读库是异步的，同步命令里没有可 await 的上下文。
 #[tauri::command]
-pub fn list_plugins(app: AppHandle) -> Result<PluginScanResult, String> {
-    plugin::scan_plugin_packages(&app)
+pub async fn list_plugins(app: AppHandle) -> Result<PluginScanResult, String> {
+    plugin::scan_plugin_packages(&app).await
 }
 
 /// 打开插件的界面窗口；窗口已存在时只把它调到前台。

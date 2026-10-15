@@ -14,7 +14,9 @@
  * 3. 包内每个 HTML / JS 里的相对引用都指向真实存在的文件，且没有逃出包目录；
  * 4. 包内每个 `.js` 都被某处引用到——写好了却没人引入，运行期就是一段死代码；
  * 5. 脚本里出现的每一处 `dasktop.<命名空间>.<方法>(...)` 都在能力桥的映射表里，
- *    且对应权限已在清单中声明。
+ *    且对应权限已在清单中声明；
+ * 6. 插件窗口尺寸的允许范围与兜底值在前端常量与 Rust 常量里一致，
+ *    清单 `window` 字段里的数值也在该范围内。
  *
  * 零依赖，直接 `node scripts/verify-plugins.mjs`，不需要先跑 `pnpm install`。
  */
@@ -86,10 +88,18 @@ function fail(pluginId, message) {
 async function main() {
   const knownPermissions = await loadKnownPermissions();
   const bridgeCapabilities = await loadBridgeCapabilities();
+  const windowSizeLimits = await loadWindowSizeLimits();
   const pluginIds = await listPluginDirectories();
 
   for (const pluginId of pluginIds) {
-    results.push(await verifyPackage(pluginId, knownPermissions, bridgeCapabilities));
+    results.push(
+      await verifyPackage(
+        pluginId,
+        knownPermissions,
+        bridgeCapabilities,
+        windowSizeLimits,
+      ),
+    );
   }
 
   report();
@@ -158,6 +168,111 @@ async function parseBackendPermissions() {
 }
 
 /**
+ * 读取宿主侧的插件窗口尺寸边界，并核对前后端两份定义一致。
+ *
+ * 这份边界同时被三处使用：设置页数字输入框的可选范围、清单 `window` 字段的夹取范围、
+ * 以及宿主建窗时传给 WebView 的下限。三者一旦漂移，用户会得到一个「配了没生效」的窗口，
+ * 而任何一侧都毫无异常——比对成本远低于排查成本。
+ */
+async function loadWindowSizeLimits() {
+  const frontend = await parseFrontendWindowSize();
+  const backend = await parseBackendWindowSize();
+
+  const comparisons = [
+    ["默认宽度", frontend.defaultWidth, backend.default?.width],
+    ["默认高度", frontend.defaultHeight, backend.default?.height],
+    ["宽度下限", frontend.width.min, backend.min?.width],
+    ["宽度上限", frontend.width.max, backend.max?.width],
+    ["高度下限", frontend.height.min, backend.min?.height],
+    ["高度上限", frontend.height.max, backend.max?.height],
+  ];
+
+  for (const [label, expected, actual] of comparisons) {
+    if (expected !== actual) {
+      fail(
+        "（宿主）",
+        `插件窗口尺寸的「${label}」在 types.ts 与 contract.rs 里不一致：前端为 ${expected}，后端为 ${actual}`,
+      );
+    }
+  }
+
+  return { height: frontend.height, width: frontend.width };
+}
+
+async function parseFrontendWindowSize() {
+  const source = await readFile(typesPath, "utf8");
+  const limits = source.match(
+    /export const PLUGIN_WINDOW_SIZE_LIMITS = \{([\s\S]*?)\n\} as const;/,
+  );
+
+  if (!limits) {
+    throw new Error("未能从 src/entities/pluginPackage/types.ts 解析出 PLUGIN_WINDOW_SIZE_LIMITS");
+  }
+
+  const defaults = source.match(
+    /export const PLUGIN_WINDOW_DEFAULT_SIZE: PluginWindowSize = \{([\s\S]*?)\n\};/,
+  );
+
+  if (!defaults) {
+    throw new Error("未能从 src/entities/pluginPackage/types.ts 解析出 PLUGIN_WINDOW_DEFAULT_SIZE");
+  }
+
+  const readDimension = (block, dimension) => {
+    const item = block.match(new RegExp(`${dimension}:\\s*\\{([^}]*)\\}`));
+
+    if (!item) {
+      throw new Error(`未能从 PLUGIN_WINDOW_SIZE_LIMITS 解析出 ${dimension}`);
+    }
+
+    return {
+      max: readNumberIn(item[1], "max"),
+      min: readNumberIn(item[1], "min"),
+    };
+  };
+
+  return {
+    defaultHeight: readNumberIn(defaults[1], "height"),
+    defaultWidth: readNumberIn(defaults[1], "width"),
+    height: readDimension(limits[1], "height"),
+    width: readDimension(limits[1], "width"),
+  };
+}
+
+async function parseBackendWindowSize() {
+  const source = await readFile(contractPath, "utf8");
+  const readPair = (name) => {
+    const found = source.match(
+      new RegExp(`pub const ${name}: \\(f64, f64\\) = \\(([\\d.]+), ([\\d.]+)\\)`),
+    );
+
+    if (!found) {
+      return null;
+    }
+
+    return { width: Number(found[1]), height: Number(found[2]) };
+  };
+
+  return {
+    default: readPair("PLUGIN_WINDOW_SIZE"),
+    max: readPair("PLUGIN_WINDOW_MAX_SIZE"),
+    min: readPair("PLUGIN_WINDOW_MIN_SIZE"),
+  };
+}
+
+/**
+ * 从一个片段里读出指定数值字段。
+ */
+function readNumberIn(source, field) {
+  const found = source.match(new RegExp(`${field}:\\s*([\\d.]+)`));
+
+  if (!found) {
+    throw new Error(`未能解析出数值字段 ${field}`);
+  }
+
+  return Number(found[1]);
+}
+
+/**
  * 读取能力桥的「方法 → 权限」映射表。
  *
  * 表在 `bridge.js` 顶部，格式是刻意约定好的（一行一项，`"命名空间.方法": "权限"`），
@@ -201,7 +316,12 @@ async function listPluginDirectories() {
 /* 校验单个插件包                                                              */
 /* -------------------------------------------------------------------------- */
 
-async function verifyPackage(pluginId, knownPermissions, bridgeCapabilities) {
+async function verifyPackage(
+  pluginId,
+  knownPermissions,
+  bridgeCapabilities,
+  windowSizeLimits,
+) {
   const packageDir = join(pluginsRoot, pluginId);
   const empty = { bridgeCalls: 0, files: 0, pages: 0, pluginId, refs: 0 };
   const manifest = await readManifest(pluginId, packageDir);
@@ -213,6 +333,8 @@ async function verifyPackage(pluginId, knownPermissions, bridgeCapabilities) {
   if (manifest.id !== pluginId) {
     fail(pluginId, `清单 id「${manifest.id}」与目录名「${pluginId}」不一致`);
   }
+
+  verifyWindowPreference(pluginId, manifest.window, windowSizeLimits);
 
   const declared = new Set(manifest.permissions ?? []);
 
@@ -268,6 +390,49 @@ async function verifyPackage(pluginId, knownPermissions, bridgeCapabilities) {
   };
 }
 
+/**
+ * 校验清单里声明的窗口尺寸。
+ *
+ * 越界值宿主会静默夹取到边界，此时插件看起来「配了却没生效」——与其让人对着设置页
+ * 排查，不如在提交前就把话说清楚。缺字段、宽高只写一维都不算错（那一维各自回落），
+ * 因此这里只检查写出来的那些值。
+ */
+function verifyWindowPreference(pluginId, preference, limits) {
+  if (preference === undefined) {
+    return;
+  }
+
+  if (typeof preference !== "object" || preference === null || Array.isArray(preference)) {
+    fail(pluginId, "清单的 window 必须是形如 { \"width\": 720, \"height\": 680 } 的对象");
+    return;
+  }
+
+  for (const dimension of ["width", "height"]) {
+    const value = preference[dimension];
+
+    if (value === undefined) {
+      continue;
+    }
+
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      fail(pluginId, `清单的 window.${dimension} 必须是数字`);
+      continue;
+    }
+
+    const { min, max } = limits[dimension];
+
+    if (value < min || value > max) {
+      fail(
+        pluginId,
+        `清单的 window.${dimension} 为 ${value}，超出宿主允许范围 ${min}-${max}（宿主会把它夹取到边界）`,
+      );
+    }
+  }
+}
+
+/**
+ * 读取清单。
+ */
 async function readManifest(pluginId, packageDir) {
   try {
     return JSON.parse(await readFile(join(packageDir, "plugin.json"), "utf8"));

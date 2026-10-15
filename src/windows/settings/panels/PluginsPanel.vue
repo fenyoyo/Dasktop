@@ -1,31 +1,49 @@
 <script setup lang="ts">
-import { AppWindow, ExternalLink, Puzzle, RefreshCw, ShieldAlert, ShieldCheck } from "@lucide/vue";
+import { ref } from "vue";
+import { AppWindow, Check, ExternalLink, Puzzle, RefreshCw, ShieldAlert, ShieldCheck, X } from "@lucide/vue";
 import {
   PLUGIN_PERMISSION_DEFINITIONS,
+  PLUGIN_WINDOW_SIZE_LIMITS,
+  PLUGIN_WINDOW_SIZE_SOURCE_LABELS,
   type PluginPermission,
   type PluginRuntimeRecord,
   type PluginRuntimeSnapshot,
 } from "@/entities/pluginPackage";
+import type { AppSettings } from "@/entities/appSettings/types";
 import SettingGroup from "../components/SettingGroup.vue";
 import SettingRow from "../components/SettingRow.vue";
 import SettingSection from "../components/SettingSection.vue";
 
 /**
- * 插件面板展示插件安装位置、可用状态、权限声明与最近通知。
+ * 插件面板展示插件安装位置、可用状态、权限声明、窗口尺寸与最近通知。
  *
  * 面板自身不触发扫描：扫描编排由设置页根组件负责，
  * 这样用户不进入本页签时插件列表也已经是就绪的。
+ *
+ * 窗口尺寸在这里分成两块：全局默认值与每个插件各自的覆盖值。
+ * 面板只负责把「当前哪个值在生效、它来自哪里」说清楚：每个插件的生效尺寸由宿主在
+ * 扫描时算好并随记录下发，面板不再自己推导优先级与边界。
  */
-defineProps<{
+const props = defineProps<{
   panelWidth: string;
   runtime: PluginRuntimeSnapshot;
+  settings: AppSettings;
 }>();
 
 const emit = defineEmits<{
   openPage: [pluginId: string];
   openRoot: [];
   reload: [];
+  pluginWindowSizeChange: [key: PluginWindowSizeSettingKey, value: number];
+  pluginWindowSizeReset: [pluginId: string];
+  pluginWindowSizeSave: [pluginId: string, width: number, height: number];
 }>();
+
+/**
+ * 全局默认窗口尺寸涉及的两个设置键；窄化到这两项而不是放开全部数值设置键，
+ * 面板改动就不会意外写坏别的用户偏好。
+ */
+type PluginWindowSizeSettingKey = "pluginWindowHeight" | "pluginWindowWidth";
 
 /**
  * 面板内操作按钮与 Box 面板共用同一视觉语言，避免设置页出现两个按钮体系。
@@ -39,6 +57,25 @@ const ACTION_BUTTON_CLASS =
  */
 const CARD_ACTION_CLASS =
   "inline-flex items-center gap-1 rounded-full border border-[#dfe2e8] px-2 py-[3px] text-[11px] font-medium text-[#555b66] transition-colors hover:bg-[#f6f7fa] hover:text-[#17181c] disabled:cursor-not-allowed disabled:opacity-45 dark:border-[#33363f] dark:text-[#a7abb5] dark:hover:bg-[#202229] dark:hover:text-[#f4f4f5]";
+
+/**
+ * 数字输入框的统一样式。
+ *
+ * 面板给整个设置窗加了 `user-select: none`（防止拖拽窗口时误选文案），输入框要靠
+ * `select-text` 自己争取回来，否则用户没法双击选中一个三位数重填。
+ */
+const NUMBER_INPUT_CLASS =
+  "h-8 w-[76px] select-text rounded-[8px] border border-[#dfe2e8] bg-[#ffffff] px-2 text-center text-[13px] text-[#202229] outline-none transition-colors focus:border-[#9aa0ac] dark:border-[#33363f] dark:bg-[#202229] dark:text-[#f4f4f5]";
+
+/**
+ * 正在编辑窗口尺寸的插件 id；同时只允许一个插件处于编辑态，
+ * 表单状态因此不需要按插件分组。
+ */
+const editingPluginId = ref<string | null>(null);
+
+/** 编辑中的宽高草稿，进入编辑态时用当前生效值填充。 */
+const draftWidth = ref<number>(0);
+const draftHeight = ref<number>(0);
 
 /**
  * 权限标签的说明文案从权限映射表派生，界面与真实能力始终同源。
@@ -81,6 +118,61 @@ function formatNotificationTime(createdAt: number): string {
 function describePermission(permission: PluginPermission | string): string {
   return PERMISSION_SUMMARIES.get(permission) ?? "";
 }
+
+/**
+ * 该插件是否单独记住过窗口尺寸；只有记住过的才需要显示「重置」。
+ */
+function hasRememberedWindowSize(record: PluginRuntimeRecord): boolean {
+  return record.windowSize.source === "custom";
+}
+
+/**
+ * 进入某个插件的尺寸编辑态。
+ */
+function startEditingWindowSize(record: PluginRuntimeRecord): void {
+  editingPluginId.value = record.id;
+  draftWidth.value = record.windowSize.width;
+  draftHeight.value = record.windowSize.height;
+}
+
+/**
+ * 提交尺寸修改。
+ *
+ * 输入框清空会得到 NaN，此时回落到当前生效值而不是把窗口压到下限——
+ * 「没填」应当按没改处理，用户只是还没决定。
+ */
+function commitWindowSize(record: PluginRuntimeRecord): void {
+  const width = Number.isFinite(draftWidth.value) ? draftWidth.value : record.windowSize.width;
+  const height = Number.isFinite(draftHeight.value)
+    ? draftHeight.value
+    : record.windowSize.height;
+
+  emit("pluginWindowSizeSave", record.id, width, height);
+  editingPluginId.value = null;
+}
+
+/**
+ * 放弃本次修改。
+ */
+function cancelWindowSizeEditing(): void {
+  editingPluginId.value = null;
+}
+
+/**
+ * 提交全局默认尺寸的一处修改。
+ *
+ * 按 `@change` 而不是每次按键提交：数字输入框在输入过程中会出现空值与中间态，
+ * 逐字保存会把没写完的值写进数据库。
+ */
+function changeGlobalWindowSize(key: PluginWindowSizeSettingKey, rawValue: string): void {
+  const numeric = Number(rawValue);
+
+  if (!Number.isFinite(numeric)) {
+    return;
+  }
+
+  emit("pluginWindowSizeChange", key, numeric);
+}
 </script>
 
 <template>
@@ -120,6 +212,37 @@ function describePermission(permission: PluginPermission | string): string {
       </SettingRow>
 
       <SettingRow
+        description="没有单独调整过的插件窗口按这个尺寸打开；拖动过某个插件窗口后，那个插件会记住自己的尺寸"
+        :divided="true"
+        title="默认窗口大小"
+      >
+        <div class="flex items-center gap-2 py-3">
+          <input
+            aria-label="默认窗口宽度"
+            :class="NUMBER_INPUT_CLASS"
+            :max="PLUGIN_WINDOW_SIZE_LIMITS.width.max"
+            :min="PLUGIN_WINDOW_SIZE_LIMITS.width.min"
+            :step="PLUGIN_WINDOW_SIZE_LIMITS.width.step"
+            type="number"
+            :value="settings.pluginWindowWidth"
+            @change="changeGlobalWindowSize('pluginWindowWidth', ($event.target as HTMLInputElement).value)"
+          />
+          <span aria-hidden="true" class="text-[12px] text-[#9aa0ac]">&times;</span>
+          <input
+            aria-label="默认窗口高度"
+            :class="NUMBER_INPUT_CLASS"
+            :max="PLUGIN_WINDOW_SIZE_LIMITS.height.max"
+            :min="PLUGIN_WINDOW_SIZE_LIMITS.height.min"
+            :step="PLUGIN_WINDOW_SIZE_LIMITS.height.step"
+            type="number"
+            :value="settings.pluginWindowHeight"
+            @change="changeGlobalWindowSize('pluginWindowHeight', ($event.target as HTMLInputElement).value)"
+          />
+          <span class="text-[12px] text-[#9aa0ac]">px</span>
+        </div>
+      </SettingRow>
+
+      <SettingRow
         :description="`每个子目录是一个插件包，需包含 plugin.json 与入口页面；共 ${runtime.records.length} 个`"
         :divided="runtime.records.length > 0"
         title="已安装插件"
@@ -149,6 +272,73 @@ function describePermission(permission: PluginPermission | string): string {
           >
             {{ record.error }}
           </p>
+
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <template v-if="editingPluginId === record.id">
+              <input
+                v-model.number="draftWidth"
+                aria-label="插件窗口宽度"
+                :class="NUMBER_INPUT_CLASS"
+                :max="PLUGIN_WINDOW_SIZE_LIMITS.width.max"
+                :min="PLUGIN_WINDOW_SIZE_LIMITS.width.min"
+                :step="PLUGIN_WINDOW_SIZE_LIMITS.width.step"
+                type="number"
+              />
+              <span aria-hidden="true" class="text-[12px] text-[#9aa0ac]">&times;</span>
+              <input
+                v-model.number="draftHeight"
+                aria-label="插件窗口高度"
+                :class="NUMBER_INPUT_CLASS"
+                :max="PLUGIN_WINDOW_SIZE_LIMITS.height.max"
+                :min="PLUGIN_WINDOW_SIZE_LIMITS.height.min"
+                :step="PLUGIN_WINDOW_SIZE_LIMITS.height.step"
+                type="number"
+              />
+              <button
+                :class="CARD_ACTION_CLASS"
+                title="保存这个插件的窗口尺寸"
+                type="button"
+                @click="commitWindowSize(record)"
+              >
+                <Check :size="12" />
+                保存
+              </button>
+              <button
+                :class="CARD_ACTION_CLASS"
+                title="放弃修改"
+                type="button"
+                @click="cancelWindowSizeEditing()"
+              >
+                <X :size="12" />
+                取消
+              </button>
+            </template>
+
+            <template v-else>
+              <span class="text-[12px] leading-5 text-[#707684] dark:text-[#9ca0ac]">
+                窗口 {{ record.windowSize.width }} &times; {{ record.windowSize.height }} px ·
+                {{ PLUGIN_WINDOW_SIZE_SOURCE_LABELS[record.windowSize.source] }}
+              </span>
+              <button
+                :class="CARD_ACTION_CLASS"
+                :disabled="record.status !== 'ready'"
+                title="为这个插件单独设置窗口尺寸"
+                type="button"
+                @click="startEditingWindowSize(record)"
+              >
+                调整尺寸
+              </button>
+              <button
+                v-if="hasRememberedWindowSize(record)"
+                :class="CARD_ACTION_CLASS"
+                title="忘掉这个插件记住的尺寸，回到清单声明或全局默认值"
+                type="button"
+                @click="emit('pluginWindowSizeReset', record.id)"
+              >
+                重置
+              </button>
+            </template>
+          </div>
         </template>
 
         <div class="flex max-w-[300px] flex-wrap items-center justify-end gap-1.5 py-3">

@@ -3,5 +3,6 @@
   "name": "HTTP 控制台",
   "version": "0.4.0",
   "entry": "index.html",
-  "permissions": ["clipboard:write", "fs:read", "fs:write", "log:write", "net:request", "ui:notify"]
+  "permissions": ["clipboard:write", "fs:read", "fs:write", "log:write", "net:request", "ui:notify"],
+  "window": { "width": 720, "height": 680 }
 }

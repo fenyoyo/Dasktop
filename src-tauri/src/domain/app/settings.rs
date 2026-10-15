@@ -13,6 +13,8 @@ pub mod tables {
     pub const BOX_VIRTUAL_ITEMS: &str = "box_virtual_items";
     /// Box 实例表。
     pub const BOXES: &str = "boxes";
+    /// 插件包级窗口尺寸表，主键为插件 id；全局默认值仍走 `app_settings`。
+    pub const PLUGIN_WINDOW_SIZES: &str = "plugin_window_sizes";
     /// 系统桌面图标接管状态表。
     pub const SHELL_ICON_VISIBILITY_RECORDS: &str = "shell_icon_visibility_records";
 }
@@ -62,6 +64,10 @@ pub mod keys {
     pub const DOUBLE_CLICK_OPEN_ITEMS: &str = "doubleClickOpenItems";
     /// Box 文件名展示规则。
     pub const NAME_DISPLAY_MODE: &str = "nameDisplayMode";
+    /// 插件窗口默认高度（逻辑像素），未为单个插件单独记住尺寸时按其开窗。
+    pub const PLUGIN_WINDOW_HEIGHT: &str = "pluginWindowHeight";
+    /// 插件窗口默认宽度（逻辑像素），未为单个插件单独记住尺寸时按其开窗。
+    pub const PLUGIN_WINDOW_WIDTH: &str = "pluginWindowWidth";
     /// 设置页主题模式。
     pub const SETTINGS_THEME: &str = "settingsTheme";
     /// 系统桌面图标进入 Box 后是否自动隐藏 Windows 原生入口。
