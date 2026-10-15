@@ -1,26 +1,25 @@
 /*
  * 翻译插件逻辑。
  *
- * 翻译请求统一经宿主能力桥的 net.request 代发：浏览器直连 Google 翻译接口会被 CORS 拦，
- * 而宿主 Rust 侧发出的请求不受同源策略约束，因此这里不自己 fetch。
+ * 翻译请求统一经宿主能力桥的 net.request 代发（POST 到 ai-translate 接口）：
+ * 浏览器直连会被 CORS 拦，宿主 Rust 侧发出的请求不受同源策略约束，因此这里不自己 fetch。
  * 朗读用浏览器 SpeechSynthesis（无权限要求，不可用时报错提示）；复制用 clipboard:write。
  *
  * 自动翻译开关：打开后随输入自动翻译，关闭则只在点按钮 / 回车时翻译。偏好存 localStorage。
  */
 
 const LANGUAGES = [
-  { code: "auto", name: "自动检测" },
-  { code: "zh-CN", name: "简体中文" },
-  { code: "zh-TW", name: "繁體中文" },
-  { code: "en", name: "English" },
-  { code: "ja", name: "日本語" },
-  { code: "ko", name: "한국어" },
-  { code: "fr", name: "Français" },
-  { code: "de", name: "Deutsch" },
-  { code: "es", name: "Español" },
-  { code: "ru", name: "Русский" },
-  { code: "pt", name: "Português" },
-  { code: "it", name: "Italiano" },
+  { code: "auto", name: "自动检测", speech: "en" },
+  { code: "zh", name: "简体中文", speech: "zh-CN" },
+  { code: "en", name: "English", speech: "en-US" },
+  { code: "ja", name: "日本語", speech: "ja-JP" },
+  { code: "ko", name: "한국어", speech: "ko-KR" },
+  { code: "fr", name: "Français", speech: "fr-FR" },
+  { code: "de", name: "Deutsch", speech: "de-DE" },
+  { code: "es", name: "Español", speech: "es-ES" },
+  { code: "ru", name: "Русский", speech: "ru-RU" },
+  { code: "pt", name: "Português", speech: "pt-PT" },
+  { code: "it", name: "Italiano", speech: "it-IT" },
 ];
 
 const topbar = document.getElementById("topbar");
@@ -63,23 +62,35 @@ function restoreWebToggle() {
 /* ------------------------------ 翻译 ------------------------------ */
 
 /**
- * 调 Google 翻译（client=gtx 免密钥端点）。宿主代发返回的是 JSON 文本，自行解析。
- * 返回结构为嵌套数组，译文分散在 data[0][i][0]。
+ * 调 ai-translate 翻译接口（POST，宿主 net.request 代发）。
+ * 省略 source_lang 即自动检测源语言；响应取 translated_text 字段。
  */
 async function translateText(text, sl, tl) {
-  const url =
-    "https://translate.googleapis.com/translate_a/single?client=gtx" +
-    `&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(text)}`;
+  const payload = { text, target_lang: tl };
 
-  const response = await dasktop.net.request({ url, method: "GET" });
+  if (sl !== "auto") {
+    payload.source_lang = sl;
+  }
+
+  const response = await dasktop.net.request({
+    url: "https://ai-translate.fncong.workers.dev/api/translate",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 
   if (response.status !== 200) {
     throw new Error(`翻译服务返回 ${response.status}`);
   }
 
   const data = JSON.parse(response.body);
+  const translated = data && data.translated_text;
 
-  return (data[0] || []).map((segment) => segment[0]).join("");
+  if (typeof translated !== "string") {
+    throw new Error("翻译结果格式异常");
+  }
+
+  return translated;
 }
 
 async function doTranslate() {
@@ -136,9 +147,15 @@ function scheduleTranslate() {
 /* ------------------------------ 朗读 / 复制 ------------------------------ */
 
 /**
- * 朗读文本。auto 源语言无法预知，回落到英文嗓音，避免直接喂 auto 导致静音。
+ * 朗读文本。传入的是语言 code，按语言表映射成语音嗓音代码（如 zh -> zh-CN），
+ * auto 源语言无法预知，回落到英文嗓音，避免直接喂 auto 导致静音。
  */
-function speak(text, lang) {
+function speechCodeFor(langCode) {
+  const entry = LANGUAGES.find((lang) => lang.code === langCode);
+  return entry ? entry.speech : "en";
+}
+
+function speak(text, langCode) {
   if (!text) {
     return;
   }
@@ -151,7 +168,7 @@ function speak(text, lang) {
   speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = lang === "auto" ? "en" : lang;
+  utterance.lang = speechCodeFor(langCode);
   speechSynthesis.speak(utterance);
 }
 
