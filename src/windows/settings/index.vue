@@ -191,6 +191,8 @@ function changeActiveSection(section: SettingsSection): void {
                   @plugin-window-size-change="desktopStore.updateNumberSetting"
                   @plugin-window-size-reset="settingsPlugins.resetPluginWindowSize"
                   @plugin-window-size-save="settingsPlugins.savePluginWindowSize"
+                  @plugin-hotkey-save="settingsPlugins.savePluginHotkey"
+                  @plugin-hotkey-reload="settingsPlugins.reloadPluginHotkeys"
                   @reload="settingsPlugins.reloadPlugins"
                 />
                 <AboutPanel

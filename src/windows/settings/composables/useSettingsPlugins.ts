@@ -3,8 +3,10 @@ import {
   initializePluginRuntime,
   openPluginWindow,
   pluginRuntime,
+  reloadPluginHotkeys,
   reloadPluginRuntime,
   resetPluginWindowSize as forgetPluginWindowSize,
+  savePluginHotkey,
   savePluginWindowSize as rememberPluginWindowSize,
   type PluginRuntimeSnapshot,
 } from "@/entities/pluginPackage";
@@ -33,6 +35,15 @@ export interface SettingsPluginsContext {
   runtime: ComputedRef<PluginRuntimeSnapshot>;
   /** 记住某个插件的窗口尺寸。 */
   savePluginWindowSize: (pluginId: string, width: number, height: number) => Promise<void>;
+  /** 保存某条热键的用户覆盖（生效快捷键 + 是否启用）。 */
+  savePluginHotkey: (
+    pluginId: string,
+    hotkeyId: string,
+    accelerator: string,
+    enabled: boolean,
+  ) => Promise<void>;
+  /** 重新拉取热键注册状态，不动插件目录扫描。 */
+  reloadPluginHotkeys: () => Promise<void>;
 }
 
 /**
@@ -90,6 +101,23 @@ export function useSettingsPlugins(): SettingsPluginsContext {
     }
   }
 
+  async function rememberPluginHotkey(
+    pluginId: string,
+    hotkeyId: string,
+    accelerator: string,
+    enabled: boolean,
+  ): Promise<void> {
+    try {
+      await savePluginHotkey(pluginId, hotkeyId, accelerator, enabled);
+    } catch (error) {
+      console.error("[plugin] 保存插件热键失败", error);
+    }
+  }
+
+  async function refreshPluginHotkeys(): Promise<void> {
+    await reloadPluginHotkeys();
+  }
+
   return {
     initializePlugins,
     openPluginPage,
@@ -97,6 +125,8 @@ export function useSettingsPlugins(): SettingsPluginsContext {
     reloadPlugins,
     resetPluginWindowSize: forgetWindowSize,
     runtime,
+    savePluginHotkey: rememberPluginHotkey,
     savePluginWindowSize: rememberWindowSize,
+    reloadPluginHotkeys: refreshPluginHotkeys,
   };
 }

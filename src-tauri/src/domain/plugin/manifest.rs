@@ -7,6 +7,20 @@ use serde::{Deserialize, Serialize};
 
 use super::window_size::PluginWindowSizeView;
 
+/// 插件窗口形态，由清单 `window.kind` 声明。
+///
+/// 与热键正交：热键决定「怎么叫醒」，kind 决定「醒来长什么样」。两者可以任意组合——
+/// 标准窗口也能被热键唤起，quick 窗口也能从设置页点开。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginWindowKind {
+    /// 有标题栏、进任务栏、关闭即销毁（默认）。
+    #[default]
+    Standard,
+    /// 无边框、置顶、不进任务栏、不可缩放、居中，关闭改隐藏。
+    Quick,
+}
+
 /// 清单里可选的窗口尺寸声明。
 ///
 /// 宽高各自可选而不是要求成对给出：有的插件只在一侧有要求（比如固定宽度的侧边工具
@@ -14,6 +28,9 @@ use super::window_size::PluginWindowSizeView;
 /// 未声明的那一维各自回落到宿主的全局默认值，而不是把整段声明丢掉。
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct PluginWindowPreference {
+    /// 窗口形态：标准窗口还是快捷浮层。未声明按标准窗口处理。
+    #[serde(default)]
+    pub kind: Option<PluginWindowKind>,
     /// 作者建议的窗口宽度（逻辑像素），宿主会把它夹取到允许范围内。
     pub width: Option<f64>,
     /// 作者建议的窗口高度（逻辑像素），宿主会把它夹取到允许范围内。
@@ -50,6 +67,27 @@ pub struct PluginManifest {
     /// 权限门控层持有，后端命令即使被直接调用也不区分调用方。
     #[serde(default)]
     pub permissions: Vec<String>,
+    /// 插件声明的全局热键，宿主在扫描/启动时统一注册。
+    ///
+    /// 热键是声明式宿主行为：插件不需要调任何命令，因此这里不绑定任何能力权限
+    /// （见规划 D1）。冲突裁决与注册失败反馈也由宿主在注册时统一处理。
+    #[serde(default)]
+    pub hotkeys: Vec<PluginHotkey>,
+}
+
+/// 清单里声明的一条全局热键。
+///
+/// 载荷很薄：id 用于「同一条唤起意图落到哪个处理逻辑」，accelerator 是注册用字符串，
+/// title 是面向用户的说明。是否真正能被注册、与谁冲突，是宿主注册层的事，不属于清单义务。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginHotkey {
+    /// 热键在包内唯一标识；插件页面从唤起意图里取走它来路由到自己的处理逻辑。
+    pub id: String,
+    /// 快捷键字符串，形如 `Alt+T`；具体可接受的写法由注册层校验。
+    pub accelerator: String,
+    /// 面向用户的中文说明，设置页与插件页面都直接展示，不需要页面再问宿主一遍。
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// 扫描结果中的单个插件包记录。

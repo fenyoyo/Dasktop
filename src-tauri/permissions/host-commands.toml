@@ -63,10 +63,12 @@ commands.allow = [
   # native_drop
   "register_box_native_drop_target",
   "unregister_box_native_drop_target",
-  # plugin（宿主面板用的三条：列表、打开目录、开插件窗口）
+  # plugin（宿主面板用的命令：列表、热键管理、打开目录、开插件窗口）
+  "list_plugin_hotkeys",
   "list_plugins",
   "open_plugin_root",
   "open_plugin_window",
+  "set_plugin_hotkey",
   # app
   "is_autostart_enabled",
   "is_autostart_launch",

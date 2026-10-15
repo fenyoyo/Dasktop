@@ -40,6 +40,9 @@ export const APP_SETTINGS_STORAGE = {
     // 与 Rust `domain/app/settings.rs` 的 tables::PLUGIN_WINDOW_SIZES 同名：
     // 两侧分别负责读写同一张表（宿主在窗口关闭时写回，设置页负责展示与重置）。
     pluginWindowSizes: "plugin_window_sizes",
+    // 用户热键覆盖表，与 Rust `services/plugin/hotkey.rs` 的 TABLE_NAME 同名：
+    // 两端都保留建表语句，注册层可能在设置窗尚未连库时就需要读覆盖。
+    pluginHotkeys: "plugin_hotkeys",
     shellIconVisibilityRecords: "shell_icon_visibility_records",
     workspaces: "workspaces",
   },

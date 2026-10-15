@@ -91,6 +91,8 @@ pub fn run() {
             commands::plugin::open_plugin_root,
             commands::plugin::open_plugin_window,
             commands::plugin::plugin_http_request,
+            commands::plugin::list_plugin_hotkeys,
+            commands::plugin::set_plugin_hotkey,
             commands::plugin::read_plugin_clipboard_text,
             commands::plugin::read_plugin_package_file,
             commands::plugin::write_plugin_clipboard_text,

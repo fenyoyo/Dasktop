@@ -29,8 +29,11 @@ use tauri::{AppHandle, Manager};
 
 use crate::domain::app::settings;
 use crate::domain::plugin::{
-    PluginManifest, PluginWindowSize, PluginWindowSizeSource, PluginWindowSizeView,
+    PluginManifest, PluginWindowKind, PluginWindowSize, PluginWindowSizeSource, PluginWindowSizeView,
     PLUGIN_WINDOW_LABEL_PREFIX,
+};
+use crate::domain::plugin::contract::{
+    PLUGIN_QUICK_WINDOW_MIN_SIZE, PLUGIN_QUICK_WINDOW_SIZE, PLUGIN_WINDOW_MAX_SIZE,
 };
 use crate::infrastructure::database;
 
@@ -54,11 +57,17 @@ pub async fn resolve_window_size(
         return PluginWindowSizeView::new(stored, PluginWindowSizeSource::Custom);
     }
 
-    let fallback = read_default_window_size(app)
-        .await
-        .unwrap_or_else(PluginWindowSize::default_size);
-
     let declared = manifest.and_then(|manifest| manifest.window).unwrap_or_default();
+    let is_quick = declared.kind == Some(PluginWindowKind::Quick);
+
+    // quick 窗口有独立尺寸区间（更小、下限更高），否则沿用全局默认尺寸。
+    let fallback = if is_quick {
+        PluginWindowSize::from_tuple(PLUGIN_QUICK_WINDOW_SIZE)
+    } else {
+        read_default_window_size(app)
+            .await
+            .unwrap_or_else(PluginWindowSize::default_size)
+    };
 
     let source = if declared.width.is_some() || declared.height.is_some() {
         PluginWindowSizeSource::Declared
@@ -66,13 +75,22 @@ pub async fn resolve_window_size(
         PluginWindowSizeSource::Global
     };
 
-    PluginWindowSizeView::new(
+    // quick 窗口用更高的下限夹取；其尺寸区间与标准窗口不同，不能用全局下限糊弄。
+    let size = if is_quick {
+        PluginWindowSize::clamped_between(
+            declared.width.unwrap_or(fallback.width),
+            declared.height.unwrap_or(fallback.height),
+            PluginWindowSize::from_tuple(PLUGIN_QUICK_WINDOW_MIN_SIZE),
+            PluginWindowSize::from_tuple(PLUGIN_WINDOW_MAX_SIZE),
+        )
+    } else {
         PluginWindowSize::clamped(
             declared.width.unwrap_or(fallback.width),
             declared.height.unwrap_or(fallback.height),
-        ),
-        source,
-    )
+        )
+    };
+
+    PluginWindowSizeView::new(size, source)
 }
 
 /// 记住单个插件的窗口尺寸，单位为逻辑像素。

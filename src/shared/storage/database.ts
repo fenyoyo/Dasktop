@@ -88,6 +88,7 @@ export async function initializeStorage(): Promise<void> {
   await ensureBoxVirtualItemStorage(database);
   await ensureShellIconVisibilityRecordStorage(database);
   await ensurePluginWindowSizeStorage(database);
+  await ensurePluginHotkeyStorage(database);
   await ensureWorkspaceStorage(database);
 }
 
@@ -104,6 +105,24 @@ async function ensurePluginWindowSizeStorage(database: Database): Promise<void> 
       width REAL NOT NULL,
       height REAL NOT NULL,
       updated_at INTEGER NOT NULL
+    )
+  `);
+}
+
+/**
+ * 用户热键覆盖表由宿主与设置页共同读写：宿主注册层在设置窗尚未连库时也可能需要读覆盖。
+ *
+ * 表结构必须与 Rust 侧的 `hotkey.rs::ensure_storage` 保持一致。
+ */
+async function ensurePluginHotkeyStorage(database: Database): Promise<void> {
+  await database.execute(`
+    CREATE TABLE IF NOT EXISTS ${APP_SETTINGS_STORAGE.tables.pluginHotkeys} (
+      plugin_id TEXT NOT NULL,
+      hotkey_id TEXT NOT NULL,
+      accelerator TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (plugin_id, hotkey_id)
     )
   `);
 }

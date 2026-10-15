@@ -119,6 +119,25 @@ impl PluginWindowSize {
         }
     }
 
+    /// 从 `(宽, 高)` 元组构造尺寸，省去每次手写 `PluginWindowSize { .. }`。
+    pub fn from_tuple(size: (f64, f64)) -> Self {
+        Self {
+            width: size.0,
+            height: size.1,
+        }
+    }
+
+    /// 用指定的上下限夹取，供 quick 窗口这类有独立尺寸区间的形态复用同一套逐维夹取。
+    ///
+    /// 未声明的维度先回落到全局默认尺寸（`PLUGIN_WINDOW_SIZE`），再被夹到 quick 下限之上：
+    /// 作者只给了宽度时，高度仍用全局默认而不是 quick 默认，避免替作者凭空决定另一维。
+    pub fn clamped_between(width: f64, height: f64, min: PluginWindowSize, max: PluginWindowSize) -> Self {
+        Self {
+            width: Self::clamp_dimension(width, min.width, max.width, PLUGIN_WINDOW_SIZE.0),
+            height: Self::clamp_dimension(height, min.height, max.height, PLUGIN_WINDOW_SIZE.1),
+        }
+    }
+
     /// 夹取单个维度。
     ///
     /// 结果取整：尺寸来自输入框与 DPI 换算时都可能带上小数，而一个 563.2 的宽度

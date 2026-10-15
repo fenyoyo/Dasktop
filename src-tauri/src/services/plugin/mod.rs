@@ -23,9 +23,11 @@
 //! 全局默认」三级优先级的唯一实现处，并且在窗口关闭时把最后尺寸写回 SQLite。
 
 mod bridge;
+mod hotkey;
 mod protocol;
 mod window_preference;
 
+pub use hotkey::{list_plugin_hotkeys, set_plugin_hotkey, PluginHotkeyRegistration};
 pub use protocol::handle_plugin_asset_request;
 
 use std::path::PathBuf;

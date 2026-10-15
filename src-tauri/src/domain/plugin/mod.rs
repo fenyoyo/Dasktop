@@ -3,7 +3,7 @@
 //! 只定义清单结构、扫描结果和跨层契约常量，不触碰任何文件系统调用：
 //! 真实目录扫描与路径沙箱位于基础设施层，宿主能力编排位于服务层。
 
-mod contract;
+pub mod contract;
 mod http;
 mod manifest;
 mod sample;
@@ -20,6 +20,9 @@ pub use contract::{
     PLUGIN_WINDOW_MAX_SIZE, PLUGIN_WINDOW_MIN_SIZE, PLUGIN_WINDOW_SIZE,
 };
 pub use http::{PluginHttpRequest, PluginHttpResponse};
-pub use manifest::{PluginManifest, PluginPackageRecord, PluginScanResult, PluginWindowPreference};
+pub use manifest::{
+    PluginHotkey, PluginManifest, PluginPackageRecord, PluginScanResult, PluginWindowKind,
+    PluginWindowPreference,
+};
 pub use sample::{SamplePackage, SAMPLE_PACKAGES};
 pub use window_size::{PluginWindowSize, PluginWindowSizeSource, PluginWindowSizeView};

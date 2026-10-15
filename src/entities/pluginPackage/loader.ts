@@ -5,7 +5,7 @@ import {
   savePluginWindowSize as persistPluginWindowSize,
 } from "@/shared/storage/database";
 import { listenPluginNotification } from "@/shared/ipc/pluginPackage";
-import { listPlugins } from "./api";
+import { listPluginHotkeys, listPlugins, setPluginHotkey } from "./api";
 import { resolvePluginPermissions } from "./permissions";
 import {
   PLUGIN_NOTIFICATION_LIMIT,
@@ -30,6 +30,7 @@ import {
  */
 const snapshot = shallowRef<PluginRuntimeSnapshot>({
   error: null,
+  hotkeys: [],
   loading: false,
   notifications: [],
   records: [],
@@ -136,11 +137,14 @@ async function scanPluginPackages(): Promise<void> {
   try {
     await ensureNotificationListener();
 
-    // 生效窗口尺寸由宿主在扫描时一并算好（含夹取与来源），前端不再自己推导。
-    const scan = await listPlugins();
+    // 窗口尺寸与热键注册状态各自独立计算：尺寸由宿主在扫描时算好随包下发，
+    // 热键状态则由 `list_plugin_hotkeys` 聚合清单、用户覆盖与冲突后返回。两条链互不依赖，
+    // 并行取避免一次设置页刷新被拖成两次往返。
+    const [scan, hotkeys] = await Promise.all([listPlugins(), listPluginHotkeys()]);
 
     updateSnapshot({
       error: null,
+      hotkeys,
       loading: false,
       records: scan.packages.map(describePackage),
       rootPath: scan.rootPath,
@@ -217,4 +221,35 @@ function describeError(error: unknown): string {
   }
 
   return typeof error === "string" ? error : "插件扫描失败，原因未知";
+}
+
+/**
+ * 保存某条热键的用户覆盖（生效快捷键 + 是否启用），保存后重新拉取注册状态刷新面板。
+ *
+ * 覆盖写库由宿主命令完成，前端不直连表；重拉一次是为了让冲突 / 非法状态立刻反映出来，
+ * 而不是停留在用户刚点保存那一刻的旧快照上。
+ */
+export async function savePluginHotkey(
+  pluginId: string,
+  hotkeyId: string,
+  accelerator: string,
+  enabled: boolean,
+): Promise<void> {
+  await setPluginHotkey(pluginId, hotkeyId, accelerator, enabled);
+  await reloadPluginHotkeys();
+}
+
+/**
+ * 仅重新拉取热键注册状态，不动插件目录扫描。
+ *
+ * 改键或切开关后用它刷新，比整页重扫更轻：热键状态聚合不依赖窗口尺寸计算，没必要为了
+ * 一个开关把整个插件目录再扫一遍。
+ */
+export async function reloadPluginHotkeys(): Promise<void> {
+  try {
+    const hotkeys = await listPluginHotkeys();
+    updateSnapshot({ hotkeys });
+  } catch (error) {
+    console.error("[plugin] 读取插件热键失败", error);
+  }
 }

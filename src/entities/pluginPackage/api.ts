@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PluginScanResult } from "./types";
+import type { PluginHotkeyRegistration, PluginScanResult } from "./types";
 
 /**
  * 插件宿主命令的前端封装。
@@ -37,4 +37,28 @@ export function openPluginWindow(pluginId: string): Promise<void> {
  */
 export function openPluginRoot(): Promise<void> {
   return invoke("open_plugin_root");
+}
+
+/**
+ * 列出全部插件热键的注册状态，叠加用户覆盖并标注冲突 / 非法。
+ *
+ * 设置页据此集中展示「哪些插件挂了快捷键」并允许用户禁用或改键。真正把快捷键挂到系统上
+ * 由宿主注册层完成，本命令只负责把清单、覆盖与状态算清楚。
+ */
+export function listPluginHotkeys(): Promise<PluginHotkeyRegistration[]> {
+  return invoke<PluginHotkeyRegistration[]>("list_plugin_hotkeys");
+}
+
+/**
+ * 写入或更新某条热键的用户覆盖（生效快捷键 + 是否启用）。
+ *
+ * 覆盖必须指向真实声明的热键；禁用一条热键时不需要先填合法快捷键。
+ */
+export function setPluginHotkey(
+  pluginId: string,
+  hotkeyId: string,
+  accelerator: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke("set_plugin_hotkey", { pluginId, hotkeyId, accelerator, enabled });
 }

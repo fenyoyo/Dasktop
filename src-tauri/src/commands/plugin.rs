@@ -38,6 +38,29 @@ pub async fn open_plugin_window(app: AppHandle, plugin_id: String) -> Result<(),
     plugin::open_plugin_window(&app, &plugin_id).await
 }
 
+/// 列出全部插件热键的注册状态，叠加用户覆盖并标注冲突 / 非法。
+///
+/// 设置页据此集中展示「哪些插件挂了快捷键」并允许用户禁用或改键。真正把快捷键挂到
+/// 系统上由注册层完成，本命令只负责把清单、覆盖与状态算清楚。
+#[tauri::command]
+pub async fn list_plugin_hotkeys(app: AppHandle) -> Result<Vec<plugin::PluginHotkeyRegistration>, String> {
+    plugin::list_plugin_hotkeys(&app).await
+}
+
+/// 写入或更新某条热键的用户覆盖（生效快捷键 + 是否启用）。
+///
+/// 覆盖必须指向真实声明的热键；禁用一条热键时不需要先填合法快捷键。
+#[tauri::command]
+pub async fn set_plugin_hotkey(
+    app: AppHandle,
+    plugin_id: String,
+    hotkey_id: String,
+    accelerator: String,
+    enabled: bool,
+) -> Result<(), String> {
+    plugin::set_plugin_hotkey(&app, &plugin_id, &hotkey_id, &accelerator, enabled).await
+}
+
 /// 读取插件包内文本文件，对应 `fs:read` 能力。
 #[tauri::command]
 pub fn read_plugin_package_file(

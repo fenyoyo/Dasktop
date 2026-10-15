@@ -67,6 +67,7 @@ mod tests {
             permissions: permissions.iter().map(|item| item.to_string()).collect(),
             // 测试用的清单不关心窗口尺寸；取值优先级由 window_preference 单独覆盖。
             window: None,
+            hotkeys: vec![],
         }
     }
 
