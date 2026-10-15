@@ -1,0 +1,364 @@
+/*
+ * JSON 格式化工具的样式。
+ *
+ * 主题通过 <html data-theme="light|dark|auto"> 控制：亮色是默认值，
+ * 暗色变量在「手动指定 dark」或「auto 且系统暗色」两种条件下生效。
+ * 语法着色用 VS Code 的 Light+ / Dark+ 调色板，开发者看着最熟悉。
+ */
+
+:root {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --panel: #fbfcfd;
+  --border: #e7e9ee;
+  --muted: #6b7280;
+  --control-bg: #ffffff;
+  --control-border: #d7dae1;
+  --control-hover: #f2f4f8;
+  --accent: #2f6bff;
+  --accent-hover: #2559db;
+  --ok: #1a7f37;
+  --error: #cf222e;
+
+  --syntax-key: #0451a5;
+  --syntax-index: #795e26;
+  --syntax-string: #a31515;
+  --syntax-number: #098658;
+  --syntax-boolean: #0000ff;
+  --syntax-null: #795e26;
+  --syntax-punctuation: #383a42;
+  --syntax-preview: #6b7280;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    color-scheme: dark;
+  }
+}
+
+/*
+ * 暗色变量出现两处（手动指定 dark、auto 且系统暗色），取值必须保持一致；
+ * 改色时两处都要改。
+ */
+:root[data-theme="dark"] {
+  --bg: #1b1d22;
+  --fg: #e6e8ee;
+  --panel: #22252c;
+  --border: #31343d;
+  --muted: #9aa3b2;
+  --control-bg: #2a2e36;
+  --control-border: #3a3e48;
+  --control-hover: #333843;
+  --accent: #2f6bff;
+  --accent-hover: #4d80ff;
+  --ok: #3fb950;
+  --error: #f47067;
+
+  --syntax-key: #9cdcfe;
+  --syntax-index: #dcdcaa;
+  --syntax-string: #ce9178;
+  --syntax-number: #b5cea8;
+  --syntax-boolean: #569cd6;
+  --syntax-null: #569cd6;
+  --syntax-punctuation: #d4d4d4;
+  --syntax-preview: #808791;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --bg: #1b1d22;
+    --fg: #e6e8ee;
+    --panel: #22252c;
+    --border: #31343d;
+    --muted: #9aa3b2;
+    --control-bg: #2a2e36;
+    --control-border: #3a3e48;
+    --control-hover: #333843;
+    --accent: #2f6bff;
+    --accent-hover: #4d80ff;
+    --ok: #3fb950;
+    --error: #f47067;
+
+    --syntax-key: #9cdcfe;
+    --syntax-index: #dcdcaa;
+    --syntax-string: #ce9178;
+    --syntax-number: #b5cea8;
+    --syntax-boolean: #569cd6;
+    --syntax-null: #569cd6;
+    --syntax-punctuation: #d4d4d4;
+    --syntax-preview: #808791;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ------------------------------ 工具栏 ------------------------------ */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.separator {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+}
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+button,
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+button:hover,
+select:hover {
+  background: var(--control-hover);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+button.primary:hover {
+  background: var(--accent-hover);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ------------------------------ 分栏布局 ------------------------------ */
+
+main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.split-horizontal {
+  flex-direction: row;
+}
+
+.split-vertical {
+  flex-direction: column;
+}
+
+.pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 分栏分隔线：横向分栏时是竖线，纵向分栏时是横线。 */
+.split-horizontal .pane + .pane {
+  border-left: 1px solid var(--border);
+}
+
+.split-vertical .pane + .pane {
+  border-top: 1px solid var(--border);
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tree-actions {
+  display: inline-flex;
+  gap: 10px;
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+button.link:hover {
+  background: none;
+  text-decoration: underline;
+}
+
+textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 10px 12px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.output {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 12px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* 压缩模式下输出是单行长文本，横向滚动而不是换行，保持「一行」的语义。 */
+.output.minified {
+  white-space: pre;
+}
+
+/* ------------------------------ 树形视图 ------------------------------ */
+
+.node .children {
+  padding-left: 18px;
+  border-left: 1px dashed var(--border);
+  margin-left: 9px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-radius: 4px;
+}
+
+.row:hover {
+  background: var(--control-hover);
+}
+
+.row.closing {
+  color: var(--syntax-punctuation);
+}
+
+.toggle {
+  border: none;
+  background: none;
+  padding: 0 3px;
+  margin-left: -3px;
+  width: 18px;
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  background: none;
+  color: var(--fg);
+}
+
+.leaf {
+  padding-left: 18px;
+}
+
+.key {
+  color: var(--syntax-key);
+}
+
+.index {
+  color: var(--syntax-index);
+}
+
+.punctuation {
+  color: var(--syntax-punctuation);
+}
+
+.bracket {
+  color: var(--syntax-punctuation);
+}
+
+.preview {
+  color: var(--syntax-preview);
+}
+
+.value-string {
+  color: var(--syntax-string);
+}
+
+.value-number {
+  color: var(--syntax-number);
+}
+
+.value-boolean {
+  color: var(--syntax-boolean);
+}
+
+.value-null {
+  color: var(--syntax-null);
+}
+
+/* ------------------------------ 状态栏 ------------------------------ */
+
+.status {
+  padding: 4px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.status.error {
+  color: var(--error);
+}

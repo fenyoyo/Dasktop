@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="auto">
+  <head>
+    <meta charset="utf-8" />
+    <title>JSON 格式化工具</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!--
+      工具栏：所有操作都作用在「输入区原文 → 解析 → 输出区」这条管线上，
+      排序与自动解码不是独立开关，而是在每次格式化时随管线一起生效。
+    -->
+    <header class="toolbar">
+      <button id="format" class="primary" type="button" title="Ctrl + Enter">格式化</button>
+      <button id="minify" type="button">压缩</button>
+      <button id="copy" type="button">复制结果</button>
+      <button id="paste" type="button">粘贴剪贴板</button>
+      <span class="separator"></span>
+      <label class="field">
+        排序
+        <select id="sort">
+          <option value="none">原始顺序</option>
+          <option value="asc">键名 A → Z</option>
+          <option value="desc">键名 Z → A</option>
+        </select>
+      </label>
+      <label class="field">
+        主题
+        <select id="theme">
+          <option value="auto">跟随系统</option>
+          <option value="light">亮色</option>
+          <option value="dark">暗色</option>
+        </select>
+      </label>
+      <button id="layout" type="button" title="切换左右 / 上下分栏">⇄ 上下分栏</button>
+    </header>
+
+    <main id="panes" class="split-horizontal">
+      <section class="pane">
+        <div class="pane-header">
+          <span>输入</span>
+          <span id="input-stat" class="muted">0 字符</span>
+        </div>
+        <textarea
+          id="input"
+          spellcheck="false"
+          placeholder='粘贴 JSON 文本，支持：URL 编码、整体 \uXXXX 转义、JSONP、多层转义字符串，会在格式化时自动识别。'
+        ></textarea>
+      </section>
+      <section class="pane">
+        <div class="pane-header">
+          <span>输出</span>
+          <span class="tree-actions">
+            <button id="expand-all" type="button" class="link">全部展开</button>
+            <button id="collapse-all" type="button" class="link">全部折叠</button>
+          </span>
+        </div>
+        <div id="output" class="output"><span class="muted">格式化后的结果会显示在这里。</span></div>
+      </section>
+    </main>
+
+    <!-- 状态栏：校验错误（含行列定位）与自动转换记录都在此处反馈 -->
+    <footer id="status" class="status muted">就绪。</footer>
+
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>
