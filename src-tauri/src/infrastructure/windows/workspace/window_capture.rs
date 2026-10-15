@@ -25,10 +25,12 @@ pub struct WorkspaceWindow {
     pub executable_path: String,
     /// 窗口高度，单位为物理像素。
     pub height: i32,
-    /// 还原时是否让该应用窗口保持最小化。
+    /// 该窗口是否被收起。
     ///
-    /// 用于把「随工作区一起打开但暂时不需要看」的应用先行收起，
-    /// 例如常驻后台的聊天工具或监控面板。默认 false 以保持既有行为。
+    /// 捕获时窗口处于最小化状态就记为 true，还原流程会先把它摆到记录的
+    /// 位置再收起，用户展开时仍回到原位；界面上可以手动覆盖，
+    /// 用于让「随工作区一起打开但暂时不需要看」的应用先行收起，
+    /// 例如常驻后台的聊天工具或监控面板。
     #[serde(default)]
     pub minimized: bool,
     /// 窗口标题，仅用于界面展示，不参与还原匹配。
@@ -171,10 +173,10 @@ mod windows_impl {
     };
     use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NO_CONSOLE, SHELLEXECUTEINFOW};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-        GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowPos, ShowWindow,
-        SWP_NOACTIVATE, SWP_NOZORDER, SW_MINIMIZE, SW_RESTORE, SW_SHOW, GWL_EXSTYLE,
-        WS_EX_TOOLWINDOW,
+        EnumWindows, GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW,
+        GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowPos,
+        ShowWindow, SWP_NOACTIVATE, SWP_NOZORDER, SW_MINIMIZE, SW_RESTORE, SW_SHOW, GWL_EXSTYLE,
+        WINDOWPLACEMENT, WS_EX_TOOLWINDOW,
     };
 
     use super::WorkspaceWindow;
@@ -286,17 +288,24 @@ mod windows_impl {
             return None;
         }
 
-        // 最小化窗口的 GetWindowRect 会返回 (-32000, -32000) 这类哨兵坐标，
-        // 且尺寸退化成标题栏大小（如 160x28），正数检查无法拦截，
-        // 必须靠 IsIconic 显式判断，否则会把无意义的条目写进工作区。
-        if IsIconic(hwnd).as_bool() {
-            return None;
-        }
+        // 最小化窗口必须纳入捕获：用户经常把暂时用不到的应用收起后仍希望
+        // 它们随工作区一起还原，直接跳过会让捕获数量少于实际打开的应用数。
+        //
+        // 但最小化窗口的 GetWindowRect 返回的是 (-32000, -32000) 这类哨兵坐标，
+        // 尺寸也退化成标题栏大小，无法直接使用，因此改用 GetWindowPlacement
+        // 的 rcNormalPosition 取它还原后的正常位置，并把 minimized 标成 true，
+        // 让还原流程先摆到该位置再收起，用户展开时就能回到记录的位置。
+        let minimized = IsIconic(hwnd).as_bool();
 
-        let mut rect = RECT::default();
-        if GetWindowRect(hwnd, &mut rect).is_err() {
-            return None;
-        }
+        let rect = if minimized {
+            read_minimized_window_rect(hwnd)?
+        } else {
+            let mut window_rect = RECT::default();
+            if GetWindowRect(hwnd, &mut window_rect).is_err() {
+                return None;
+            }
+            window_rect
+        };
 
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
@@ -313,12 +322,38 @@ mod windows_impl {
             arguments: String::new(),
             executable_path,
             height,
-            minimized: false,
+            minimized,
             title,
             width,
             x: rect.left,
             y: rect.top,
         })
+    }
+
+    /// 读取最小化窗口还原后的正常位置。
+    ///
+    /// `GetWindowPlacement` 的 `rcNormalPosition` 记录窗口从最小化状态还原时
+    /// 应出现的位置与尺寸，这正是工作区需要保存的坐标；若窗口从未被正常
+    /// 还原过，该字段可能是哨兵坐标，此时按不可捕获处理，避免写入无意义的
+    /// 位置导致还原后窗口跑到屏幕外。
+    unsafe fn read_minimized_window_rect(hwnd: HWND) -> Option<RECT> {
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+
+        if GetWindowPlacement(hwnd, &mut placement).is_err() {
+            return None;
+        }
+
+        let normal_rect = placement.rcNormalPosition;
+        if normal_rect.left <= MINIMIZED_SENTINEL_COORDINATE
+            || normal_rect.top <= MINIMIZED_SENTINEL_COORDINATE
+        {
+            return None;
+        }
+
+        Some(normal_rect)
     }
 
     /// 判断可执行文件是否属于系统外壳宿主进程。
