@@ -18,7 +18,7 @@ withDefaults(
 </script>
 
 <template>
-  <div class="grid min-h-[76px] items-center gap-6 px-5" :class="gridClass">
+  <div class="grid min-h-[76px] items-center gap-6 px-5 py-3.5" :class="gridClass">
     <div class="min-w-0 pr-4">
       <h2 class="text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">{{ title }}</h2>
       <p v-if="description" class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">

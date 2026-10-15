@@ -3,5 +3,6 @@
   "name": "JSON 格式化工具",
   "version": "0.1.0",
   "entry": "index.html",
-  "permissions": ["clipboard:read", "clipboard:write"]
+  "permissions": ["clipboard:read", "clipboard:write"],
+  "window": { "width": 720, "height": 680 }
 }
