@@ -19,6 +19,8 @@
   "use strict";
 
   var CAPABILITY_TABLE = {
+    "clipboard.read": "clipboard:read",
+    "clipboard.write": "clipboard:write",
     "fs.read": "fs:read",
     "fs.write": "fs:write",
     "log.write": "log:write",
@@ -94,6 +96,29 @@
     }),
     has: has,
   };
+
+  var clipboard = {};
+
+  if (has(CAPABILITY_TABLE["clipboard.read"])) {
+    clipboard.read = function () {
+      return invoke("read_plugin_clipboard_text", {
+        pluginId: config.id,
+      });
+    };
+  }
+
+  if (has(CAPABILITY_TABLE["clipboard.write"])) {
+    clipboard.write = function (value) {
+      return invoke("write_plugin_clipboard_text", {
+        pluginId: config.id,
+        text: text(value),
+      });
+    };
+  }
+
+  if (Object.keys(clipboard).length > 0) {
+    api.clipboard = Object.freeze(clipboard);
+  }
 
   var fs = {};
 

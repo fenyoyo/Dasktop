@@ -90,6 +90,31 @@ pub fn notify_from_plugin(
     plugin::notify_from_plugin(&app, &plugin_id, &title, &message)
 }
 
+/// 读取系统剪贴板文本，对应 `clipboard:read` 能力。
+#[tauri::command]
+pub fn read_plugin_clipboard_text(
+    app: AppHandle,
+    window: Window,
+    plugin_id: String,
+) -> Result<String, String> {
+    let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
+
+    plugin::read_clipboard_text(&app, &plugin_id)
+}
+
+/// 写入系统剪贴板文本，对应 `clipboard:write` 能力。
+#[tauri::command]
+pub fn write_plugin_clipboard_text(
+    app: AppHandle,
+    window: Window,
+    plugin_id: String,
+    text: String,
+) -> Result<(), String> {
+    let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
+
+    plugin::write_clipboard_text(&app, &plugin_id, &text)
+}
+
 /// 代表插件发起 HTTP 请求，对应 `net:request` 能力。
 ///
 /// 刻意声明为异步：请求耗时完全取决于远端，同步命令会让整条 IPC 通道一起等待。

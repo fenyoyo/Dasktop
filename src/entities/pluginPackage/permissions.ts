@@ -31,6 +31,16 @@ export interface PluginPermissionDefinition {
  */
 export const PLUGIN_PERMISSION_DEFINITIONS: readonly PluginPermissionDefinition[] = [
   {
+    command: "read_plugin_clipboard_text",
+    permission: "clipboard:read",
+    summary: "读取系统剪贴板中的文本",
+  },
+  {
+    command: "write_plugin_clipboard_text",
+    permission: "clipboard:write",
+    summary: "写入文本到系统剪贴板（覆盖现有内容）",
+  },
+  {
     command: "read_plugin_package_file",
     permission: "fs:read",
     summary: "读取插件包自身目录内的文本文件",

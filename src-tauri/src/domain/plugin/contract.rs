@@ -80,12 +80,16 @@ pub const PLUGIN_PERMISSION_FS_WRITE: &str = "fs:write";
 pub const PLUGIN_PERMISSION_LOG_WRITE: &str = "log:write";
 pub const PLUGIN_PERMISSION_NET_REQUEST: &str = "net:request";
 pub const PLUGIN_PERMISSION_UI_NOTIFY: &str = "ui:notify";
+pub const PLUGIN_PERMISSION_CLIPBOARD_READ: &str = "clipboard:read";
+pub const PLUGIN_PERMISSION_CLIPBOARD_WRITE: &str = "clipboard:write";
 
 /// 宿主认识的全部能力权限。
 ///
 /// 与逐条常量并列而不是只留这一个数组：命令里写的是具名常量，清单校验要的是集合，
 /// 两边都从同一处取，避免「加了权限但忘了加进集合」。
 pub const PLUGIN_PERMISSIONS: &[&str] = &[
+    PLUGIN_PERMISSION_CLIPBOARD_READ,
+    PLUGIN_PERMISSION_CLIPBOARD_WRITE,
     PLUGIN_PERMISSION_FS_READ,
     PLUGIN_PERMISSION_FS_WRITE,
     PLUGIN_PERMISSION_LOG_WRITE,
@@ -103,3 +107,9 @@ pub const PLUGIN_HTTP_TIMEOUT_SECS: u64 = 20;
 ///
 /// 响应体会整体序列化后跨 IPC 交给前端，不设上限的话一次大文件下载就能把内存打满。
 pub const PLUGIN_HTTP_RESPONSE_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// 插件读写剪贴板文本的体积上限，单位为字节（按 UTF-8 长度计）。
+///
+/// 剪贴板文本需要整体通过 IPC 和 Win32 全局内存传递，不设上限的话
+/// 一次超大文本操作就能拖垮宿主进程。
+pub const PLUGIN_CLIPBOARD_MAX_BYTES: usize = 1 * 1024 * 1024;

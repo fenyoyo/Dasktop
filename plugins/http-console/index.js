@@ -13,6 +13,9 @@ const PREVIEW_LIMIT = 600;
 const urlInput = document.getElementById("url");
 const resultBox = document.getElementById("result");
 const sendButton = document.getElementById("send");
+const copyButton = document.getElementById("copy");
+
+let lastBody = "";
 
 urlInput.value = DEFAULT_URL;
 
@@ -20,6 +23,25 @@ sendButton.addEventListener("click", sendRequest);
 urlInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     sendRequest();
+  }
+});
+
+copyButton.addEventListener("click", async () => {
+  if (!lastBody) {
+    return;
+  }
+
+  try {
+    await dasktop.clipboard.write(lastBody);
+    copyButton.textContent = "已复制";
+    setTimeout(() => {
+      copyButton.textContent = "复制响应";
+    }, 1500);
+  } catch (error) {
+    copyButton.textContent = "复制失败";
+    setTimeout(() => {
+      copyButton.textContent = "复制响应";
+    }, 1500);
   }
 });
 
@@ -115,6 +137,10 @@ function renderHint(text) {
 
 function renderResult({ body, elapsedMs, ok, status, url }) {
   const preview = body.length > PREVIEW_LIMIT ? `${body.slice(0, PREVIEW_LIMIT)}…（共 ${body.length} 字符）` : body;
+
+  lastBody = body;
+  copyButton.style.display = body ? "" : "none";
+  copyButton.textContent = "复制响应";
 
   resultBox.innerHTML = "";
   resultBox.appendChild(

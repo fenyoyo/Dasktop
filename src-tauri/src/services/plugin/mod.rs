@@ -30,15 +30,17 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::plugin::{
-    PluginHttpRequest, PluginHttpResponse, PluginManifest, PluginScanResult, PLUGIN_LOG_DIR_NAME,
-    PLUGIN_NOTIFICATION_EVENT, PLUGIN_PERMISSION_FS_READ, PLUGIN_PERMISSION_FS_WRITE,
-    PLUGIN_PERMISSION_LOG_WRITE, PLUGIN_PERMISSION_NET_REQUEST, PLUGIN_PERMISSION_UI_NOTIFY,
-    PLUGIN_PERMISSIONS, PLUGIN_PROTOCOL_SCHEME, PLUGIN_ROOT_DIR_NAME, PLUGIN_WINDOW_LABEL_PREFIX,
-    PLUGIN_WINDOW_MIN_SIZE, PLUGIN_WINDOW_SIZE,
+    PluginHttpRequest, PluginHttpResponse, PluginManifest, PluginScanResult,
+    PLUGIN_CLIPBOARD_MAX_BYTES, PLUGIN_LOG_DIR_NAME, PLUGIN_NOTIFICATION_EVENT, PLUGIN_PERMISSIONS,
+    PLUGIN_PERMISSION_CLIPBOARD_READ, PLUGIN_PERMISSION_CLIPBOARD_WRITE, PLUGIN_PERMISSION_FS_READ,
+    PLUGIN_PERMISSION_FS_WRITE, PLUGIN_PERMISSION_LOG_WRITE, PLUGIN_PERMISSION_NET_REQUEST,
+    PLUGIN_PERMISSION_UI_NOTIFY, PLUGIN_PROTOCOL_SCHEME, PLUGIN_ROOT_DIR_NAME,
+    PLUGIN_WINDOW_LABEL_PREFIX, PLUGIN_WINDOW_MIN_SIZE, PLUGIN_WINDOW_SIZE,
 };
 use crate::infrastructure::filesystem::{plugin_log, plugin_package};
 use crate::infrastructure::http;
 use crate::infrastructure::windows::shell_file;
+use crate::infrastructure::windows::text_clipboard;
 
 /// 宿主转发给界面的插件通知载荷。
 #[derive(Debug, Clone, Serialize)]
@@ -231,6 +233,48 @@ pub fn notify_from_plugin(
         .map_err(|error| format!("插件通知广播失败：{error}"))
 }
 
+/// 读取系统剪贴板文本，对应 `clipboard:read` 能力。
+///
+/// 只记录字符数：剪贴板内容可能含密码等敏感信息，绝不写进日志。
+/// 超长文本按 UTF-8 字符边界截断到 [`PLUGIN_CLIPBOARD_MAX_BYTES`]，防止超大内容拖垮 IPC。
+pub fn read_clipboard_text(app: &AppHandle, plugin_id: &str) -> Result<String, String> {
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_CLIPBOARD_READ)?;
+
+    let text = text_clipboard::read_text()?.unwrap_or_default();
+    let truncated = truncate_utf8_boundary(&text, PLUGIN_CLIPBOARD_MAX_BYTES);
+
+    append_log(
+        app,
+        plugin_id,
+        "clipboard",
+        &format!("读取剪贴板文本，{} 字符", truncated.chars().count()),
+    )?;
+
+    Ok(truncated)
+}
+
+/// 写入系统剪贴板文本，对应 `clipboard:write` 能力。
+///
+/// 只记录字符数：剪贴板内容可能含密码等敏感信息，绝不写进日志。
+pub fn write_clipboard_text(app: &AppHandle, plugin_id: &str, text: &str) -> Result<(), String> {
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_CLIPBOARD_WRITE)?;
+
+    if text.len() > PLUGIN_CLIPBOARD_MAX_BYTES {
+        return Err(format!(
+            "剪贴板文本超出上限（{PLUGIN_CLIPBOARD_MAX_BYTES} 字节）"
+        ));
+    }
+
+    text_clipboard::write_text(text)?;
+
+    append_log(
+        app,
+        plugin_id,
+        "clipboard",
+        &format!("写入剪贴板文本，{} 字符", text.chars().count()),
+    )
+}
+
 /// 代表插件发起 HTTP 请求，对应 `net:request` 能力。
 ///
 /// 发起与完成各记一行日志：网络能力是插件里最难复现的一类行为，出问题时
@@ -262,6 +306,26 @@ pub async fn http_request(
     )?;
 
     Ok(response)
+}
+
+/// 按 UTF-8 字符边界截断字符串到指定字节上限。
+///
+/// 直接用 `String::truncate` 可能切在多字节字符中间导致 panic，这里先扫描
+/// 字符边界找到安全截断点。
+fn truncate_utf8_boundary(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+
+    let mut boundary = 0;
+    for (index, _) in text.char_indices() {
+        if index > max_bytes {
+            break;
+        }
+        boundary = index;
+    }
+
+    text[..boundary].to_string()
 }
 
 /// 用系统资源管理器打开插件根目录，方便用户手工安装或替换插件包。
@@ -328,7 +392,10 @@ fn ensure_known_permissions(plugin_id: &str, manifest: &PluginManifest) -> Resul
 ///
 /// 扫描期已经查过一次，但那个结果只存在于前端快照里；从「扫描过」到「用户点开」之间，
 /// 作者完全可能把文件挪走。这里失败会直接给出文件名，而少了这一步用户看到的是一片空白。
-fn ensure_entry_page(package_dir: &std::path::Path, manifest: &PluginManifest) -> Result<(), String> {
+fn ensure_entry_page(
+    package_dir: &std::path::Path,
+    manifest: &PluginManifest,
+) -> Result<(), String> {
     match plugin_package::resolve_sandboxed_path(package_dir, &manifest.entry) {
         Ok(path) if path.is_file() => Ok(()),
         Ok(_) => Err(format!("入口页面不存在：{}", manifest.entry)),

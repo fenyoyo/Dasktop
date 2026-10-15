@@ -76,6 +76,8 @@ export interface PluginNotificationPayload {
  * 以及本文件权限与宿主命令的映射（见 `permissions.ts`）。
  */
 export const PLUGIN_PERMISSIONS = [
+  "clipboard:read",
+  "clipboard:write",
   "fs:read",
   "fs:write",
   "log:write",
