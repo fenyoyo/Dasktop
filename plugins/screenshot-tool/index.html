@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>截图工具</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!--
+      截图工具分三层：顶部工具栏选标注工具与样式，中间画布展示截图并叠加标注，
+      底部操作栏负责采集、保存、复制、撤销、清空。画布内部分辨率等于截图原始尺寸，
+      通过 CSS 等比缩放到容器内，鼠标坐标按缩放比换算回原始像素，保证标注不模糊。
+    -->
+    <header class="toolbar">
+      <div class="tool-group" id="tool-group">
+        <button class="tool active" data-tool="rect" type="button" title="矩形">▭</button>
+        <button class="tool" data-tool="line" type="button" title="直线">／</button>
+        <button class="tool" data-tool="arrow" type="button" title="箭头">↗</button>
+        <button class="tool" data-tool="freehand" type="button" title="画笔">✏</button>
+        <button class="tool" data-tool="text" type="button" title="文字">T</button>
+      </div>
+
+      <div class="tool-group">
+        <label class="field">
+          <span>颜色</span>
+          <input id="color" type="color" value="#ff3b30" />
+        </label>
+        <label class="field">
+          <span>粗细</span>
+          <select id="line-width">
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="6">6</option>
+            <option value="10">10</option>
+          </select>
+        </label>
+      </div>
+    </header>
+
+    <main class="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div id="placeholder" class="placeholder">点击「开始截图」框选屏幕区域</div>
+    </main>
+
+    <footer class="actions">
+      <button id="btn-capture" class="primary" type="button">📷 开始截图</button>
+      <button id="btn-undo" type="button" disabled>↶ 撤销</button>
+      <button id="btn-clear" type="button" disabled>🗑 清空标注</button>
+      <span class="spacer"></span>
+      <button id="btn-copy" type="button" disabled>📋 复制到剪贴板</button>
+      <button id="btn-save" class="primary" type="button" disabled>💾 保存图片</button>
+    </footer>
+
+    <div id="status" class="status"></div>
+
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

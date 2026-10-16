@@ -1,0 +1,210 @@
+/*
+ * 截图工具样式。
+ * 布局：顶栏工具 → 中间画布（可滚动）→ 底栏操作 → 状态栏。
+ * 画布内部分辨率为截图原始尺寸，靠 CSS 缩放显示，所以容器允许横向/纵向滚动。
+ */
+
+:root {
+  --bg: #f5f5f7;
+  --panel: #ffffff;
+  --border: #e0e0e0;
+  --text: #1d1d1f;
+  --muted: #86868b;
+  --primary: #0071e3;
+  --primary-hover: #0077ed;
+  --danger: #ff3b30;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ------------------------------ 工具栏 ------------------------------ */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.tool:hover {
+  border-color: var(--primary);
+}
+
+.tool.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#color {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  cursor: pointer;
+  background: none;
+}
+
+#line-width {
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 6px;
+  background: var(--panel);
+}
+
+/* ------------------------------ 画布区 ------------------------------ */
+
+.canvas-wrap {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background:
+    linear-gradient(45deg, #e8e8e8 25%, transparent 25%),
+    linear-gradient(-45deg, #e8e8e8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e8e8e8 75%),
+    linear-gradient(-45deg, transparent 75%, #e8e8e8 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+
+#canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  background: #fff;
+}
+
+.placeholder {
+  position: absolute;
+  color: var(--muted);
+  font-size: 16px;
+  pointer-events: none;
+}
+
+#canvas:not([hidden]) + .placeholder {
+  display: none;
+}
+
+/* ------------------------------ 操作栏 ------------------------------ */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+.actions button {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.actions button:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+
+.actions button.primary {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.actions button.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ------------------------------ 状态栏 ------------------------------ */
+
+.status {
+  padding: 8px 16px;
+  font-size: 12px;
+  text-align: center;
+  min-height: 32px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+
+.status.ok {
+  color: #34c759;
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.status.muted {
+  color: var(--muted);
+}
