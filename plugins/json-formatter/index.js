@@ -16,6 +16,7 @@ const STORAGE_KEYS = { layout: "json-formatter:layout", theme: "json-formatter:t
 
 const input = document.getElementById("input");
 const inputStat = document.getElementById("input-stat");
+const gutter = document.getElementById("gutter");
 const output = document.getElementById("output");
 const statusBar = document.getElementById("status");
 const panes = document.getElementById("panes");
@@ -51,7 +52,31 @@ input.addEventListener("keydown", (event) => {
 
 input.addEventListener("input", () => {
   inputStat.textContent = `${input.value.length.toLocaleString()} 字符`;
+  renderGutter();
 });
+
+// 行号列自身不滚动，位置完全跟随输入区的滚动条；水平滚动不影响行号，无需同步 scrollLeft。
+input.addEventListener("scroll", () => {
+  gutter.scrollTop = input.scrollTop;
+});
+
+/**
+ * 重建行号列。
+ *
+ * 行号按换行符数出来，而不是按视觉行：输入区用 wrap="off" 关掉了自动换行，
+ * 一个逻辑行就是一行，两者才能对上。空输入按 1 行算，与常见编辑器一致——
+ * 光标停在第 1 行，左侧就该显示 1。
+ */
+function renderGutter() {
+  const lineCount = input.value.split("\n").length;
+  const numbers = [];
+  for (let line = 1; line <= lineCount; line++) {
+    numbers.push(String(line));
+  }
+
+  gutter.textContent = numbers.join("\n");
+  gutter.scrollTop = input.scrollTop;
+}
 
 // 排序不是独立的显示开关，而是管线的一环：改动排序后需要重新加工当前输入。
 sortSelect.addEventListener("change", () => {
@@ -231,6 +256,12 @@ if (!window.dasktop) {
   copyButton.title = "宿主能力桥不可用";
   pasteButton.title = "宿主能力桥不可用";
 }
+
+/*
+ * 先渲染一次初始行号：空输入也要显示「1」，否则打开工具时左侧一片空白，
+ * 而光标就停在第一行，看起来像是行号列没生效。
+ */
+renderGutter();
 
 /*
  * 启动时自动读一次剪贴板，放最后执行：前面的主题、布局偏好与桥检测都已各就各位，

@@ -6,5 +6,5 @@
   "entry": "index.html",
   "icon": "icon.svg",
   "permissions": ["clipboard:read", "clipboard:write"],
-  "window": { "width": 720, "height": 680 }
+  "window": { "width": 920, "height": 680 }
 }

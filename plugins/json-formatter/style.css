@@ -236,8 +236,42 @@ button.link:hover {
   text-decoration: underline;
 }
 
+/*
+ * 输入区容器：行号列固定在左，输入框占满剩余宽度。
+ * overflow 交给 textarea 自己处理，容器只负责横排，避免出现两层滚动条。
+ */
+.input-area {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/*
+ * 行号列：字体、字号、行高必须与 textarea 完全一致，垂直方向的 padding 也要对齐
+ * （只对齐行高而不对齐 padding-top，首行行号就会与首行文本错位半行）。
+ * 宽度取 3 位数字 + 右侧留白，四位数以上行号自动留白即可，不必动态测量。
+ * overflow 必须 hidden：行号列不自己滚动，位置完全跟随 textarea 的 scrollTop。
+ */
+.gutter {
+  flex: none;
+  overflow: hidden;
+  padding: 10px 8px 10px 10px;
+  text-align: right;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre;
+  user-select: none;
+}
+
 textarea {
   flex: 1;
+  min-width: 0;
   resize: none;
   border: none;
   outline: none;

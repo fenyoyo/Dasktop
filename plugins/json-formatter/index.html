@@ -41,11 +41,20 @@
           <span>输入</span>
           <span id="input-stat" class="muted">0 字符</span>
         </div>
-        <textarea
-          id="input"
-          spellcheck="false"
-          placeholder='粘贴 JSON 文本，支持：URL 编码、整体 \uXXXX 转义、JSONP、多层转义字符串，会在格式化时自动识别。'
-        ></textarea>
+        <!--
+          行号列与输入区共用同一套字体与行高，靠同步 scrollTop 对齐；
+          输入区用 wrap="off" 关掉自动换行，让「逻辑行」与「视觉行」一一对应，
+          否则一条超长 JSON 被折成多行后，行号就对不上了。
+        -->
+        <div class="input-area">
+          <div id="gutter" class="gutter" aria-hidden="true"></div>
+          <textarea
+            id="input"
+            wrap="off"
+            spellcheck="false"
+            placeholder='粘贴 JSON 文本，支持：URL 编码、整体 \uXXXX 转义、JSONP、多层转义字符串，会在格式化时自动识别。'
+          ></textarea>
+        </div>
       </section>
       <section class="pane">
         <div class="pane-header">
