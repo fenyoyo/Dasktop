@@ -23,6 +23,8 @@ use std::ffi::OsString;
 #[cfg(target_os = "windows")]
 use std::fs;
 #[cfg(target_os = "windows")]
+use std::io::Cursor;
+#[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStringExt;
 #[cfg(target_os = "windows")]
 use std::path::{Path, PathBuf};
@@ -30,16 +32,18 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Gdi::HBITMAP;
 #[cfg(target_os = "windows")]
-use windows::Win32::System::DataExchange::GetClipboardData;
+use windows::Win32::System::DataExchange::{EmptyClipboard, GetClipboardData};
 #[cfg(target_os = "windows")]
-use windows::Win32::System::Ole::{CF_BITMAP, CF_HDROP};
+use windows::Win32::System::Ole::{CF_BITMAP, CF_DIB, CF_HDROP};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
 #[cfg(target_os = "windows")]
 use crate::infrastructure::windows::common::bitmap::{to_rgba, RGBA_BYTES_PER_PIXEL};
 #[cfg(target_os = "windows")]
-use crate::infrastructure::windows::common::clipboard::ClipboardSession;
+use crate::infrastructure::windows::common::clipboard::{set_clipboard_hglobal, ClipboardSession};
+#[cfg(target_os = "windows")]
+use crate::infrastructure::windows::common::global_memory;
 #[cfg(target_os = "windows")]
 use crate::infrastructure::windows::common::png::encode_rgba;
 
@@ -228,8 +232,101 @@ fn oversized_error(max_bytes: usize) -> String {
     format!("剪贴板图片超出上限（{max_bytes} 字节）")
 }
 
+/// 把 PNG 字节写入系统剪贴板（覆盖现有内容），供插件 `clipboard:write` 能力使用。
+///
+/// 写入走 **CF_DIB**（设备无关位图）而不是 CF_BITMAP：CF_DIB 的内存块自包含
+/// （BITMAPINFOHEADER + 像素），不需要额外创建 GDI 位图对象，也避免了「谁负责释放
+/// HBITMAP」的所有权问题。Windows 会在 CF_DIB ⇄ CF_BITMAP 之间自动合成，所以粘贴到
+/// 画图、Word、微信等任何接受图片的应用都能正常拿到位图。
+///
+/// 像素统一写成 32 位 BGRA、自上而下（biHeight 取负）：
+/// - 32 位省掉 24 位 DIB 必需的行填充（每行 4 字节对齐），拼接逻辑更直接；
+/// - Alpha 强制补成不透明：截图类图片本就没有透明背景，而不少应用在处理 32 位 DIB 时
+///   会把全 0 的 Alpha 当成透明，导致粘贴出来一片空白。
+///
+/// PNG 解码只做颜色扩展（EXPAND），不做尺寸缩放：插件提交的就是最终要粘贴的图，
+/// 缩放会让用户以为「我截的是 A 怎么贴出来变模糊了」。
+#[cfg(target_os = "windows")]
+pub(crate) fn write_image(png_bytes: &[u8]) -> Result<(), String> {
+    let (width, height, bgra) = decode_png_to_bgra(png_bytes)?;
+
+    let dib = build_dib(width, height, &bgra);
+
+    let _clipboard = ClipboardSession::open()?;
+    unsafe {
+        EmptyClipboard().map_err(|error| format!("无法清空系统剪贴板：{error}"))?;
+    }
+
+    let memory = global_memory::create_moveable_from_bytes(&dib, "无法创建图片剪贴板内存")?;
+    // SetClipboardData 成功后 HGLOBAL 归系统所有，失败时由 set_clipboard_hglobal 内部释放。
+    set_clipboard_hglobal(u32::from(CF_DIB.0), memory, "无法写入图片剪贴板")?;
+
+    // dib 是函数内的局部 Vec，SetClipboardData 只拿走了全局内存中的那一份拷贝，
+    // 此处正常返回后 dib 随函数栈回收，不会与系统持有的内存重复释放。
+    Ok(())
+}
+
+/// 把 PNG 字节解码成 BGRA 像素（自上而下、每像素 4 字节、Alpha 强制不透明）。
+#[cfg(target_os = "windows")]
+fn decode_png_to_bgra(png_bytes: &[u8]) -> Result<(i32, i32, Vec<u8>), String> {
+    let decoder = png::Decoder::new(Cursor::new(png_bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("PNG 解码失败：{error}"))?;
+
+    let mut buffer = vec![0_u8; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("PNG 解码失败：{error}"))?;
+
+    let width = info.width as i32;
+    let height = info.height as i32;
+    let samples = info.color_type.samples() as usize;
+    let pixel_count = (width * height) as usize;
+    let mut bgra = Vec::with_capacity(pixel_count * 4);
+
+    for pixel in buffer[..info.buffer_size()].chunks_exact(samples) {
+        bgra.push(pixel[2]);
+        bgra.push(pixel[1]);
+        bgra.push(pixel[0]);
+        bgra.push(OPAQUE_ALPHA);
+    }
+
+    Ok((width, height, bgra))
+}
+
+/// 组装 CF_DIB 内存块：BITMAPINFOHEADER（32 位、自上而下）+ BGRA 像素。
+///
+/// `biHeight` 取负值表示自上而下，省去调用方翻行；`biSizeImage` 直接用像素总长，
+/// 因为 32 位像素没有行填充。
+#[cfg(target_os = "windows")]
+fn build_dib(width: i32, height: i32, bgra: &[u8]) -> Vec<u8> {
+    let mut dib = Vec::with_capacity(40 + bgra.len());
+
+    dib.extend_from_slice(&(40u32).to_le_bytes());
+    dib.extend_from_slice(&width.to_le_bytes());
+    dib.extend_from_slice(&(-height).to_le_bytes());
+    dib.extend_from_slice(&(1u16).to_le_bytes());
+    dib.extend_from_slice(&(32u16).to_le_bytes());
+    dib.extend_from_slice(&(0u32).to_le_bytes());
+    dib.extend_from_slice(&(bgra.len() as u32).to_le_bytes());
+    dib.extend_from_slice(&(0i32).to_le_bytes());
+    dib.extend_from_slice(&(0i32).to_le_bytes());
+    dib.extend_from_slice(&(0u32).to_le_bytes());
+    dib.extend_from_slice(&(0u32).to_le_bytes());
+    dib.extend_from_slice(bgra);
+
+    dib
+}
+
 /// 非 Windows 平台没有 CF_BITMAP / CF_HDROP 语义，保持显式错误便于开发时定位平台差异。
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn read_image(_max_bytes: usize) -> Result<Option<ClipboardImage>, String> {
     Err("当前平台暂不支持读取 Windows 剪贴板图片".to_string())
+}
+
+/// 非 Windows 平台不支持写入图片剪贴板。
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn write_image(_png_bytes: &[u8]) -> Result<(), String> {
+    Err("当前平台暂不支持写入 Windows 剪贴板图片".to_string())
 }

@@ -47,6 +47,7 @@ commands.allow = [
   "read_plugin_clipboard_text",
   "read_plugin_clipboard_image",
   "write_plugin_clipboard_text",
+  "write_plugin_clipboard_image",
   # 屏幕截图：框选层由宿主弹出，插件只负责发起请求并拿回 PNG 数据
   "capture_plugin_screen_region",
 ]

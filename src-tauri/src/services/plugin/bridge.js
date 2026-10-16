@@ -125,6 +125,16 @@
         text: text(value),
       });
     };
+
+    // 图片写入与文本写入共用 clipboard:write 权限。参数是 PNG 的 base64 载荷
+    // （不含 data URL 前缀），宿主解码后以 CF_DIB 写入系统剪贴板，Windows 会自动
+    // 合成 CF_BITMAP 供画图、Word、微信等应用粘贴。
+    clipboard.writeImage = function (base64) {
+      return invoke("write_plugin_clipboard_image", {
+        pluginId: config.id,
+        image: text(base64),
+      });
+    };
   }
 
   if (Object.keys(clipboard).length > 0) {

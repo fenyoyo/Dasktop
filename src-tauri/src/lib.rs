@@ -116,6 +116,7 @@ pub fn run() {
             commands::plugin::read_plugin_clipboard_text,
             commands::plugin::read_plugin_package_file,
             commands::plugin::save_plugin_file,
+            commands::plugin::write_plugin_clipboard_image,
             commands::plugin::write_plugin_clipboard_text,
             commands::plugin::write_plugin_log,
             commands::plugin::write_plugin_package_file,

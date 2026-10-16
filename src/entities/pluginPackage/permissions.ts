@@ -46,7 +46,15 @@ export const PLUGIN_PERMISSION_DEFINITIONS: readonly PluginPermissionDefinition[
   {
     command: "write_plugin_clipboard_text",
     permission: "clipboard:write",
-    summary: "写入文本到系统剪贴板（覆盖现有内容）",
+    summary: "写入文本或图片到系统剪贴板（覆盖现有内容）",
+  },
+  {
+    // 同一条权限对应两条命令（写文本 / 写图片）。summary 描述的是「权限」本身，不是
+    // 单条命令，因此必须与上一条逐字一致：设置页按权限串建索引取文案，两行不一致时
+    // 后写入的那条会静默覆盖另一条，用户看到的说明就与权限真实范围对不上。
+    command: "write_plugin_clipboard_image",
+    permission: "clipboard:write",
+    summary: "写入文本或图片到系统剪贴板（覆盖现有内容）",
   },
   {
     command: "read_plugin_package_file",

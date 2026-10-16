@@ -449,6 +449,44 @@ pub fn write_clipboard_text(app: &AppHandle, plugin_id: &str, text: &str) -> Res
     )
 }
 
+/// 写入系统剪贴板图片，对应 `clipboard:write` 能力。
+///
+/// 与文本写入共用 `clipboard:write` 权限：对插件而言这是同一种能力，文本还是图片只是
+/// 运行时内容上的差别，不该要求插件为此多声明一条权限。
+///
+/// `image_base64` 是 PNG 的 base64 载荷（不含 data URL 前缀）：二进制只能以文本跨 IPC。
+/// 体积上限复用 [`PLUGIN_CLIPBOARD_IMAGE_MAX_BYTES`]——写入与读取面对的是同一类「截图级
+/// 图片」，没必要再单独设一档。
+///
+/// 日志只记字节数，不记内容：剪贴板里的图片可能带着用户屏幕上的敏感信息。
+pub fn write_clipboard_image(
+    app: &AppHandle,
+    plugin_id: &str,
+    image_base64: &str,
+) -> Result<(), String> {
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_CLIPBOARD_WRITE)?;
+
+    let png_bytes = STANDARD
+        .decode(image_base64)
+        .map_err(|error| format!("解析插件提交的图片失败：{error}"))?;
+
+    if png_bytes.len() > PLUGIN_CLIPBOARD_IMAGE_MAX_BYTES {
+        return Err(format!(
+            "剪贴板图片超出上限（{} 字节）",
+            PLUGIN_CLIPBOARD_IMAGE_MAX_BYTES
+        ));
+    }
+
+    image_clipboard::write_image(&png_bytes)?;
+
+    append_log(
+        app,
+        plugin_id,
+        "clipboard",
+        &format!("写入剪贴板图片，{} 字节", png_bytes.len()),
+    )
+}
+
 /// 代表插件发起 HTTP 请求，对应 `net:request` 能力。
 ///
 /// 发起与完成各记一行日志：网络能力是插件里最难复现的一类行为，出问题时

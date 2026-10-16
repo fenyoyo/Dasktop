@@ -2,7 +2,7 @@
 //!
 //! 只做 IPC 参数接收与转发。
 //!
-//! 九条能力命令都带一个 `window: tauri::Window` 参数，这不是为了操作窗口，而是为了拿到
+//! 十条能力命令都带一个 `window: tauri::Window` 参数，这不是为了操作窗口，而是为了拿到
 //! **调用方身份**：插件窗口的标签是 `plugin_<id>`，由宿主建窗时写死，插件页面改不了。
 //! 命令参数里的 `plugin_id` 则完全由插件填写，只作为宿主窗口调用时的兜底。两者交给
 //! [`plugin::resolve_caller_plugin_id`] 收敛，结果是「插件只能以自己的身份调能力」。
@@ -211,6 +211,25 @@ pub fn write_plugin_clipboard_text(
     let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
 
     plugin::write_clipboard_text(&app, &plugin_id, &text)
+}
+
+/// 写入系统剪贴板图片（PNG base64 载荷），对应 `clipboard:write` 能力。
+///
+/// 与文本写入共用 `clipboard:write` 权限：对插件而言这是同一种能力，文本还是图片只是
+/// 运行时内容上的差别，不该要求插件为此多声明一条权限。
+///
+/// `image` 是不含 data URL 前缀的 base64 载荷：二进制只能以文本跨 IPC。宿主解码后以
+/// CF_DIB 写入系统剪贴板，Windows 会自动合成 CF_BITMAP 供其它应用粘贴。
+#[tauri::command]
+pub fn write_plugin_clipboard_image(
+    app: AppHandle,
+    window: Window,
+    plugin_id: String,
+    image: String,
+) -> Result<(), String> {
+    let plugin_id = plugin::resolve_caller_plugin_id(window.label(), &plugin_id);
+
+    plugin::write_clipboard_image(&app, &plugin_id, &image)
 }
 
 /// 代表插件发起 HTTP 请求，对应 `net:request` 能力。
