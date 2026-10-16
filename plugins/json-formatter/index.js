@@ -74,20 +74,54 @@ copyButton.addEventListener("click", async () => {
   }
 });
 
-pasteButton.addEventListener("click", async () => {
+pasteButton.addEventListener("click", () => loadFromClipboard({ silent: false }));
+
+/**
+ * 把剪贴板里的文本载入输入区并跑一遍格式化管线。
+ *
+ * 除了「粘贴剪贴板」按钮，插件窗口打开时也会静默调用一次：用户多半是先复制了一段
+ * JSON 才想起打开这个工具，启动即载入能省掉一次粘贴动作。
+ *
+ * @param {{ silent: boolean }} options silent 为 true 时，剪贴板为空、内容不是 JSON、
+ *   读取失败都**不打扰用户**——这些情况在「打开工具」这个场景里全都正常（用户打开
+ *   工具前剪贴板里放着什么内容，与这个工具无关），报错只会让人以为工具坏了；
+ *   用户主动点「粘贴剪贴板」时才把失败原因说出来。
+ * @returns {Promise<void>}
+ */
+async function loadFromClipboard({ silent }) {
+  let text;
   try {
-    const text = await dasktop.clipboard.read();
-    if (!text.trim()) {
-      setStatus("剪贴板里没有文本内容。", "error");
-      return;
-    }
-    input.value = text;
-    input.dispatchEvent(new Event("input"));
-    applyPipeline("pretty");
+    text = await dasktop.clipboard.read();
   } catch (error) {
-    setStatus(`读取剪贴板失败：${error && error.message ? error.message : error}`, "error");
+    if (!silent) {
+      setStatus(`读取剪贴板失败：${error && error.message ? error.message : error}`, "error");
+    }
+    return;
   }
-});
+
+  if (!text || text.trim() === "") {
+    if (!silent) {
+      setStatus("剪贴板里没有文本内容。", "error");
+    }
+    return;
+  }
+
+  /*
+   * 「是不是 JSON」交给管线判断，不在外面再写一套正则。管线认得 URL 编码、整体
+   * \uXXXX 转义、JSONP 这些变体，自己另判一套迟早会与它不一致，表现为「手动点粘贴
+   * 能解析，启动时自动载入却无动于衷」这种自相矛盾的行为。
+   */
+  if (!parsePipeline(text).ok) {
+    if (!silent) {
+      setStatus("剪贴板内容不是 JSON。", "error");
+    }
+    return;
+  }
+
+  input.value = text;
+  input.dispatchEvent(new Event("input"));
+  applyPipeline("pretty", silent ? "已从剪贴板载入：" : "");
+}
 
 expandAllButton.addEventListener("click", () => {
   if (treeControls) {
@@ -134,8 +168,9 @@ applyLayout(localStorage.getItem(STORAGE_KEYS.layout) === "vertical");
  * 把输入区原文跑一遍「解析 → 排序 → 渲染」的完整管线。
  *
  * @param {"pretty" | "minified"} mode pretty 渲染成可折叠树，minified 渲染成单行文本
+ * @param {string} [prefix] 成功状态的前缀，用于标注这次加工的来源（如启动时自动载入）
  */
-function applyPipeline(mode) {
+function applyPipeline(mode, prefix = "") {
   const raw = input.value;
   if (raw.trim() === "") {
     setStatus("输入为空：请先粘贴一段 JSON。", "error");
@@ -169,7 +204,7 @@ function applyPipeline(mode) {
   }
 
   const transforms = result.steps.length > 0 ? `，已自动：${result.steps.join("、")}` : "";
-  setStatus(`JSON 有效${transforms}。`, "ok");
+  setStatus(`${prefix}JSON 有效${transforms}。`, "ok");
 }
 
 function setStatus(text, kind) {
@@ -195,4 +230,15 @@ if (!window.dasktop) {
   pasteButton.disabled = true;
   copyButton.title = "宿主能力桥不可用";
   pasteButton.title = "宿主能力桥不可用";
+}
+
+/*
+ * 启动时自动读一次剪贴板，放最后执行：前面的主题、布局偏好与桥检测都已各就各位，
+ * 界面先渲染成最终状态，再补一次「有没有现成 JSON 可以载入」的尝试。
+ *
+ * 只在输入区为空时载入——页面刚加载时输入区必然是空的，这条判断是为了防住未来
+ * 有人把内容预置进输入区（或在同一页面里再次触发）时被静默覆盖。
+ */
+if (window.dasktop && dasktop.clipboard && input.value.trim() === "") {
+  loadFromClipboard({ silent: true });
 }
