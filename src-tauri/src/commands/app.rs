@@ -1,4 +1,4 @@
-use crate::services::app::lifecycle;
+use crate::services::app::{hotkey, lifecycle};
 use tauri::AppHandle;
 
 /// 读取系统开机自启状态；状态来源是官方 autostart 插件，不写入前端 SQLite 设置表。
@@ -26,4 +26,26 @@ pub fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<bool, Stri
 #[tauri::command]
 pub fn is_primary_mouse_button_pressed() -> bool {
     lifecycle::is_primary_mouse_button_pressed()
+}
+
+/// 读取「置顶当前前台窗口」全局快捷键的配置与可用状态。
+///
+/// 声明为 `async` 是因为要读 SQLite：配置存在 `app_settings`，读库是异步的。
+#[tauri::command]
+pub async fn list_foreground_pin_hotkey(
+    app: AppHandle,
+) -> Result<hotkey::ForegroundPinHotkeyRegistration, String> {
+    hotkey::list_foreground_pin_hotkey(&app).await
+}
+
+/// 写入「置顶当前前台窗口」全局快捷键配置，并立即把全部全局快捷键重挂到系统。
+///
+/// 返回写入后的状态而不是 `()`：面板据此立即刷新「能不能注册上」的判定，不必再发一次查询。
+#[tauri::command]
+pub async fn set_foreground_pin_hotkey(
+    app: AppHandle,
+    accelerator: String,
+    enabled: bool,
+) -> Result<hotkey::ForegroundPinHotkeyRegistration, String> {
+    hotkey::set_foreground_pin_hotkey(&app, &accelerator, enabled).await
 }

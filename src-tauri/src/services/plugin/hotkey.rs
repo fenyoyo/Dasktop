@@ -24,6 +24,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::domain::plugin::PLUGIN_WINDOW_LABEL_PREFIX;
 use crate::infrastructure::database;
+use crate::services::app::hotkey as app_hotkey;
 use crate::services::plugin;
 
 /// 一个插件的启动热键在设置页里的状态。
@@ -89,7 +90,9 @@ pub async fn list_plugin_hotkeys(app: &AppHandle) -> Result<Vec<PluginHotkeyRegi
         }
 
         let entry = config.get(&package.id);
-        let accelerator = entry.map(|(accelerator, _)| accelerator.clone()).unwrap_or_default();
+        let accelerator = entry
+            .map(|(accelerator, _)| accelerator.clone())
+            .unwrap_or_default();
         // 未配置过启动热键的插件默认「启用」：用户一旦在设置页配了键就该立即生效，
         // 不要把缺省当成「关掉」。真正被用户禁用过的插件在表里留下 enabled=0，会命中上面的
         // entry 分支而不会落到这个缺省值；空快捷键只是「未配置」状态，不会真的占用系统热键。
@@ -114,8 +117,7 @@ pub async fn list_plugin_hotkeys(app: &AppHandle) -> Result<Vec<PluginHotkeyRegi
     let mut registrations = Vec::with_capacity(drafts.len());
     for draft in drafts {
         let normalized = normalize_accelerator(&draft.accelerator);
-        let (status, message) =
-            classify(&draft, occurrence.get(&normalized).copied().unwrap_or(0));
+        let (status, message) = classify(&draft, occurrence.get(&normalized).copied().unwrap_or(0));
 
         registrations.push(PluginHotkeyRegistration {
             accelerator: draft.accelerator,
@@ -185,8 +187,9 @@ pub async fn set_plugin_hotkey(
         .map_err(|error| format!("保存热键配置失败：{error}"))?;
 
     // 配置写库后立即重挂系统热键：用户改完希望「下一次按键就用新键」，而不是残留旧键。
+    // 走应用级入口而不是本模块的注册函数：只有应用级入口会先清空，改键后旧键才会真正注销。
     // 失败只记日志——数据库已落盘，热键状态以设置页为准，注册层偶发失败不该回滚用户的配置。
-    if let Err(error) = register_all_plugin_hotkeys(app).await {
+    if let Err(error) = app_hotkey::register_all_global_hotkeys(app).await {
         eprintln!("[plugin] 保存热键配置后重注册失败：{error}");
     }
 
@@ -195,16 +198,11 @@ pub async fn set_plugin_hotkey(
 
 /// 把全部有效启动热键挂到系统全局快捷键。
 ///
-/// 调用方应在两处触发：应用启动完成（setup 已 spawn）与用户改键 / 重载插件之后。
-/// 每次都先清空再全量重挂，而不是做增量对账：覆盖改键后旧键必须注销，否则会留下一个
-/// 「改了却还生效」的幽灵键；而全量重挂比「精确算出哪条变了」简单，插件热键数量本就有限。
-pub async fn register_all_plugin_hotkeys(app: &AppHandle) -> Result<(), String> {
-    // 清空必须在挂新键之前：若新键与某条旧键指向同一组合键，重复注册会直接报错。
-    // 首次运行本就没有可注销的键，失败不致命，只记一行便于排查。
-    if let Err(error) = app.global_shortcut().unregister_all() {
-        eprintln!("[plugin] 注销旧热键失败（可忽略首次运行）：{error}");
-    }
-
+/// **只负责挂，不负责清**：注销旧热键的动作统一由应用级入口
+/// [`crate::services::app::hotkey::register_all_global_hotkeys`] 在挂全部热键之前做一次。
+/// 本函数若也清一遍，会把同一批里已经注册好的应用级热键（置顶当前前台窗口）一并抹掉，
+/// 且不报错——症状是「插件热键正常、应用级快捷键突然失灵」。
+pub async fn register_plugin_hotkeys(app: &AppHandle) -> Result<(), String> {
     let registrations = match list_plugin_hotkeys(app).await {
         Ok(registrations) => registrations,
         Err(error) => {
@@ -238,7 +236,10 @@ pub async fn register_all_plugin_hotkeys(app: &AppHandle) -> Result<(), String> 
         ) {
             // 单条注册失败不影响其余：冲突等情况在 list 时已标成 conflict，这里再失败通常是
             // 系统层偶发，记录即可，不该让整次注册崩掉。
-            eprintln!("[plugin] 注册热键 {} 失败：{error}", registration.accelerator);
+            eprintln!(
+                "[plugin] 注册热键 {} 失败：{error}",
+                registration.accelerator
+            );
         }
     }
 
@@ -265,9 +266,7 @@ fn on_hotkey_triggered(app: AppHandle, plugin_id: String) {
     // 窗口不存在：走与「设置页点开」完全相同的建窗路径，只是带上了唤起意图，
     // 让插件页面一加载就知道「我是被热键叫醒的」。
     tauri::async_runtime::spawn(async move {
-        if let Err(error) =
-            plugin::open_plugin_window(&app, &plugin_id, Some("")).await
-        {
+        if let Err(error) = plugin::open_plugin_window(&app, &plugin_id, Some("")).await {
             eprintln!("[plugin] 热键唤起建窗失败 {plugin_id}：{error}");
         }
     });
@@ -324,7 +323,10 @@ fn classify(draft: &RegistrationDraft, count: usize) -> (PluginHotkeyStatus, Opt
 ///
 /// 注：manifest 不再声明热键，`verify-plugins` 已不再校验插件包内的热键字符串；
 /// 这里的校验服务于宿主端为用户填写的启动热键。
-fn validate_accelerator(accelerator: &str) -> Result<(), String> {
+///
+/// 对应用级热键（置顶前台窗口）同样公开：两类热键共用同一套「至少一个修饰键 + 一个主键、
+/// 排除 Win 组合」的规则，各自实现一遍迟早会分叉成「设置页说能存、注册却失败」。
+pub(crate) fn validate_accelerator(accelerator: &str) -> Result<(), String> {
     let tokens: Vec<String> = accelerator
         .split('+')
         .map(|token| token.trim().to_lowercase())
@@ -335,15 +337,24 @@ fn validate_accelerator(accelerator: &str) -> Result<(), String> {
         return Err("快捷键必须包含至少一个修饰键和一个主键（例如 Alt+T）".into());
     }
 
-    let modifiers = ["ctrl", "control", "alt", "shift", "meta", "cmd", "command", "option"];
-    let has_modifier = tokens.iter().any(|token| modifiers.contains(&token.as_str()));
-    let has_key = tokens.iter().any(|token| !modifiers.contains(&token.as_str()));
+    let modifiers = [
+        "ctrl", "control", "alt", "shift", "meta", "cmd", "command", "option",
+    ];
+    let has_modifier = tokens
+        .iter()
+        .any(|token| modifiers.contains(&token.as_str()));
+    let has_key = tokens
+        .iter()
+        .any(|token| !modifiers.contains(&token.as_str()));
 
     if !has_modifier || !has_key {
         return Err("快捷键必须包含至少一个修饰键和一个主键（例如 Alt+T）".into());
     }
 
-    if tokens.iter().any(|token| token == "super" || token == "win") {
+    if tokens
+        .iter()
+        .any(|token| token == "super" || token == "win")
+    {
         return Err("Windows 徽标键（Win / Super）组合会被系统保留，无法注册".into());
     }
 
@@ -354,6 +365,9 @@ fn validate_accelerator(accelerator: &str) -> Result<(), String> {
 ///
 /// 用户可能写成 `alt + T`、`Alt+T` 等多种形态，比较冲突前统一小写并去掉空白，
 /// 避免「同一条组合键因为写法不同而被判成不冲突」。不解析具体按键语义——那交给注册层。
+///
+/// 应用级热键同样复用：只要两边都用同一套「写法 → 比较键」的映射，跨域冲突才会被
+/// 判成同一个键。
 fn normalize_accelerator(accelerator: &str) -> String {
     accelerator
         .split('+')
@@ -437,7 +451,12 @@ async fn ensure_storage(pool: &SqlitePool) -> Result<(), String> {
         }
     }
 
-    let expected = [PLUGIN_ID_COLUMN, ACCELERATOR_COLUMN, ENABLED_COLUMN, UPDATED_AT_COLUMN];
+    let expected = [
+        PLUGIN_ID_COLUMN,
+        ACCELERATOR_COLUMN,
+        ENABLED_COLUMN,
+        UPDATED_AT_COLUMN,
+    ];
     // 列必须「恰好」是这四列：老声明式模型的表多出 `hotkey_id`（NOT NULL），
     // 只查「缺没缺」会漏掉这种多余列，INSERT 缺了该列的值仍会失败。
     let complete = columns.len() == expected.len()

@@ -78,4 +78,15 @@ pub mod keys {
     pub const SNAP_THRESHOLD: &str = "snapThreshold";
     /// Box 是否吸附屏幕或其他 Box 边缘。
     pub const SNAP_TO_EDGES: &str = "snapToEdges";
+    /// 「把当前前台窗口置顶 / 取消置顶」全局快捷键的组合键，值为 JSON 字符串。
+    ///
+    /// 刻意不进前端 `APP_SETTING_KEYS`：那份常量被 `satisfies Record<keyof AppSettings, ...>`
+    /// 强绑，加进去会连带改类型、默认值与清洗逻辑，而这个键的合法性由 Rust 侧的
+    /// `validate_accelerator` 独占判定。前端一律经宿主命令读写，不直连设置表。
+    pub const FOREGROUND_PIN_HOTKEY: &str = "foregroundPinHotkey";
+    /// 上述全局快捷键是否启用，值为 JSON 布尔。
+    ///
+    /// 与 `FOREGROUND_PIN_HOTKEY` 同样只由 Rust 侧读写：二者必须一起校验、一起落库、
+    /// 一起重挂，拆成前端各写各的会出现「键配好了但启用状态没跟上」的半生效状态。
+    pub const FOREGROUND_PIN_HOTKEY_ENABLED: &str = "foregroundPinHotkeyEnabled";
 }

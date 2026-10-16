@@ -62,14 +62,15 @@ pub fn run() {
                 infrastructure::tauri::tray::show_settings_window(app.handle());
             }
 
-            // 启动即注册全部有效启动热键：用户可能从不打开设置页，但热键应从开机就生效。
+            // 启动即注册全部全局快捷键：用户可能从不打开设置页，但快捷键应从开机就生效。
             // 此时前端尚未连库，配置表读不到，注册的是「未配置」状态（没有热键）；用户后续的
-            // 配置会经 set_plugin_hotkey 命令再次触发全量重注册。
+            // 配置会经 set_plugin_hotkey / set_foreground_pin_hotkey 命令再次触发全量重注册。
             let hotkey_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = services::plugin::register_all_plugin_hotkeys(&hotkey_app).await
+                if let Err(error) =
+                    services::app::hotkey::register_all_global_hotkeys(&hotkey_app).await
                 {
-                    eprintln!("[plugin] 启动注册插件热键失败：{error}");
+                    eprintln!("[hotkey] 启动注册全局快捷键失败：{error}");
                 }
             });
 
@@ -123,7 +124,9 @@ pub fn run() {
             commands::app::is_autostart_enabled,
             commands::app::is_autostart_launch,
             commands::app::is_primary_mouse_button_pressed,
+            commands::app::list_foreground_pin_hotkey,
             commands::app::set_autostart_enabled,
+            commands::app::set_foreground_pin_hotkey,
             commands::workspace::capture_workspace_layout,
             commands::workspace::create_workspace_desktop_shortcut,
             commands::workspace::resolve_current_executable_path,

@@ -28,8 +28,9 @@ mod protocol;
 mod screen_capture;
 mod window_preference;
 
+pub(crate) use hotkey::validate_accelerator;
 pub use hotkey::{
-    list_plugin_hotkeys, register_all_plugin_hotkeys, set_plugin_hotkey, PluginHotkeyRegistration,
+    list_plugin_hotkeys, register_plugin_hotkeys, set_plugin_hotkey, PluginHotkeyRegistration,
 };
 pub use protocol::handle_plugin_asset_request;
 pub use screen_capture::{

@@ -74,7 +74,9 @@ commands.allow = [
   "is_autostart_enabled",
   "is_autostart_launch",
   "is_primary_mouse_button_pressed",
+  "list_foreground_pin_hotkey",
   "set_autostart_enabled",
+  "set_foreground_pin_hotkey",
   # workspace
   "capture_workspace_layout",
   "create_workspace_desktop_shortcut",

@@ -3,6 +3,7 @@
 pub(crate) mod common;
 pub(crate) mod desktop_glue;
 pub(crate) mod folder_dialog;
+pub(crate) mod foreground_topmost;
 pub(crate) mod image_clipboard;
 pub(crate) mod mouse;
 pub(crate) mod native_drop;

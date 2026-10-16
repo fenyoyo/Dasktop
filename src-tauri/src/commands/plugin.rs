@@ -13,6 +13,7 @@
 use tauri::{AppHandle, Window};
 
 use crate::domain::plugin::{PluginHttpRequest, PluginHttpResponse, PluginScanResult};
+use crate::services::app::hotkey as app_hotkey;
 use crate::services::plugin;
 
 /// 扫描插件根目录，返回全部插件包的清单、解析失败原因与各自的生效窗口尺寸。
@@ -26,11 +27,12 @@ pub async fn list_plugins(app: AppHandle) -> Result<PluginScanResult, String> {
     let result = plugin::scan_plugin_packages(&app).await?;
 
     // 扫描即「重载」：每重载一次就把最新启动热键重新挂到系统，改键后也能即时生效。
-    // 注册层每次全量重挂（先注销再注册），幂等，重复触发无害。
+    // 走应用级入口而非插件侧注册函数：只有前者会先清空，改键后的旧键才会真正注销；
+    // 顺带把应用级快捷键（置顶前台窗口）一起重挂，全量动作幂等，重复触发无害。
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = plugin::register_all_plugin_hotkeys(&handle).await {
-            eprintln!("[plugin] 重载后注册热键失败：{error}");
+        if let Err(error) = app_hotkey::register_all_global_hotkeys(&handle).await {
+            eprintln!("[hotkey] 重载后注册全局快捷键失败：{error}");
         }
     });
 
