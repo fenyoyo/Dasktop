@@ -1,0 +1,495 @@
+/*
+ * Crontab 生成器样式。
+ *
+ * 主题通过 <html data-theme="light|dark|auto"> 控制，与 JSON 格式化工具保持一致；
+ * 字段卡片使用卡片式布局，快捷预设放在顶部便于一键切换。
+ */
+
+:root {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --panel: #fbfcfd;
+  --card: #ffffff;
+  --border: #e7e9ee;
+  --muted: #6b7280;
+  --control-bg: #ffffff;
+  --control-border: #d7dae1;
+  --control-hover: #f2f4f8;
+  --accent: #2f6bff;
+  --accent-hover: #2559db;
+  --accent-soft: #e8f0ff;
+  --ok: #1a7f37;
+  --error: #cf222e;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1b1d22;
+  --fg: #e6e8ee;
+  --panel: #22252c;
+  --card: #22252c;
+  --border: #31343d;
+  --muted: #9aa3b2;
+  --control-bg: #2a2e36;
+  --control-border: #3a3e48;
+  --control-hover: #333843;
+  --accent: #3b82f6;
+  --accent-hover: #4d80ff;
+  --accent-soft: #1e3a5f;
+  --ok: #3fb950;
+  --error: #f47067;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --bg: #1b1d22;
+    --fg: #e6e8ee;
+    --panel: #22252c;
+    --card: #22252c;
+    --border: #31343d;
+    --muted: #9aa3b2;
+    --control-bg: #2a2e36;
+    --control-border: #3a3e48;
+    --control-hover: #333843;
+    --accent: #3b82f6;
+    --accent-hover: #4d80ff;
+    --accent-soft: #1e3a5f;
+    --ok: #3fb950;
+    --error: #f47067;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ------------------------------ 顶部工具栏 ------------------------------ */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-wrap: wrap;
+}
+
+.toolbar h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 999px;
+}
+
+.tab {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+
+.tab.active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.toolbar-actions {
+  margin-left: auto;
+}
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.field > span {
+  font-size: 12px;
+}
+
+.field > input,
+.field > select {
+  font: inherit;
+  color: inherit;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+/* ------------------------------ 主内容区 ------------------------------ */
+
+.container {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.panel {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.panel.active {
+  display: flex;
+}
+
+/* ------------------------------ 快捷预设 ------------------------------ */
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.presets-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.preset {
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+.preset:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ------------------------------ 字段编辑器 ------------------------------ */
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.field-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.field-name {
+  font-weight: 600;
+}
+
+.field-range {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel);
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.field-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-type {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  font: inherit;
+  color: inherit;
+}
+
+.field-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  flex-wrap: wrap;
+}
+
+.field-value input {
+  width: 80px;
+  padding: 5px 8px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  font: inherit;
+  color: inherit;
+}
+
+.field-value input[type="text"] {
+  flex: 1;
+  min-width: 120px;
+}
+
+/* ------------------------------ 结果卡片 ------------------------------ */
+
+.result-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.result-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.result-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.result-field input {
+  width: 100%;
+  padding: 8px 12px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 15px;
+  background: var(--panel);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  color: var(--fg);
+}
+
+.result-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.description {
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  background: var(--accent-soft);
+  border-radius: 8px;
+  color: var(--fg);
+}
+
+.description.error {
+  background: rgba(207, 34, 46, 0.1);
+  color: var(--error);
+}
+
+.next-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.next-runs-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.next-runs ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+}
+
+.next-runs li {
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+/* ------------------------------ 解析面板 ------------------------------ */
+
+.parse-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.parse-card .field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.parse-card .field input {
+  width: 100%;
+  padding: 8px 12px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 15px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  color: var(--fg);
+}
+
+.parse-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.field-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-detail-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.field-detail ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 6px;
+}
+
+.field-detail li {
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.field-detail li strong {
+  color: var(--accent);
+}
+
+/* ------------------------------ 状态栏 ------------------------------ */
+
+.status {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12px;
+  text-align: center;
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.status.error {
+  color: var(--error);
+}
+

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="auto">
+  <head>
+    <meta charset="utf-8" />
+    <title>Crontab 生成器</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!--
+      Crontab 生成器：支持可视化生成表达式与反向解析表达式。
+      生成面板通过五个字段的「类型 + 值」组合拼装 cron；
+      解析面板读取表达式后给出中文描述与最近执行时间。
+    -->
+    <header class="toolbar">
+      <h1>Crontab 生成器</h1>
+      <nav class="tabs">
+        <button id="tab-generate" class="tab active" type="button">生成</button>
+        <button id="tab-parse" class="tab" type="button">解析</button>
+      </nav>
+      <div class="toolbar-actions">
+        <label class="field">
+          主题
+          <select id="theme">
+            <option value="auto">跟随系统</option>
+            <option value="light">亮色</option>
+            <option value="dark">暗色</option>
+          </select>
+        </label>
+      </div>
+    </header>
+
+    <main class="container">
+      <!-- 生成面板 -->
+      <section id="panel-generate" class="panel active">
+        <div class="presets">
+          <span class="presets-label">快捷预设</span>
+          <button class="preset" data-expression="* * * * *" type="button">每分钟</button>
+          <button class="preset" data-expression="0 * * * *" type="button">每小时</button>
+          <button class="preset" data-expression="0 0 * * *" type="button">每天</button>
+          <button class="preset" data-expression="0 0 * * 0" type="button">每周</button>
+          <button class="preset" data-expression="0 0 1 * *" type="button">每月</button>
+          <button class="preset" data-expression="0 0 1 1 *" type="button">每年</button>
+        </div>
+
+        <div id="fields" class="fields">
+          <!-- 字段编辑器由 JS 动态渲染 -->
+        </div>
+
+        <div class="result-card">
+          <div class="result-row">
+            <label class="field result-field">
+              <span>生成的表达式</span>
+              <input id="generate-expression" type="text" readonly spellcheck="false" />
+            </label>
+            <div class="result-actions">
+              <button id="generate-copy" class="primary" type="button">复制</button>
+            </div>
+          </div>
+
+          <div id="generate-description" class="description"></div>
+
+          <div class="next-runs">
+            <span class="next-runs-label">接下来 5 次执行时间</span>
+            <ul id="generate-next-runs"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 解析面板 -->
+      <section id="panel-parse" class="panel">
+        <div class="parse-card">
+          <label class="field">
+            <span>Cron 表达式</span>
+            <input
+              id="parse-input"
+              type="text"
+              placeholder="例如：0 0 * * *"
+              spellcheck="false"
+            />
+          </label>
+          <div class="parse-actions">
+            <button id="parse-btn" class="primary" type="button">解析</button>
+            <button id="parse-paste" type="button">粘贴</button>
+            <button id="parse-clear" type="button">清空</button>
+          </div>
+        </div>
+
+        <div id="parse-result" class="result-card">
+          <div class="description" id="parse-description"></div>
+          <div class="field-detail">
+            <span class="field-detail-label">字段展开</span>
+            <ul id="parse-fields"></ul>
+          </div>
+          <div class="next-runs">
+            <span class="next-runs-label">接下来 5 次执行时间</span>
+            <ul id="parse-next-runs"></ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer id="status" class="status muted">就绪。</footer>
+
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>
+

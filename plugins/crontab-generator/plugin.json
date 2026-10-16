@@ -1,0 +1,8 @@
+{
+  "id": "crontab-generator",
+  "name": "Crontab 生成器",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "permissions": ["clipboard:read", "clipboard:write"],
+  "window": { "width": 720, "height": 760 }
+}
