@@ -6,7 +6,7 @@ import type { PluginHotkeyRegistration, PluginScanResult } from "./types";
  *
  * 这一层只负责参数搬运，不做权限判断。
  *
- * 注意这里**只有宿主自己用的三条命令**。插件能调的五条能力命令（读写包内文件、写日志、
+ * 注意这里**只有宿主自己用的命令**。插件能调的五条能力命令（读写包内文件、写日志、
  * 发请求、发通知）不经过这里：它们由插件页面里的能力桥直接调用，插件代码与宿主前端
  * 是两套东西。宿主再包一层只会让人以为「插件能力由宿主代码发起」。
  */
@@ -37,6 +37,17 @@ export function openPluginWindow(pluginId: string): Promise<void> {
  */
 export function openPluginRoot(): Promise<void> {
   return invoke("open_plugin_root");
+}
+
+/**
+ * 把仓库里的插件包同步到插件根目录（开发调试用），返回本次同步的插件 id。
+ *
+ * 源目录由 Rust 侧在编译期定位（仓库根的 `plugins/`），因此这条命令只在源码目录下可用：
+ * 打包后的应用调用它会直接报错。这不是缺陷——它本就不服务于终端用户，而是让开发者改完
+ * 插件源码后点一下按钮即可生效，不必手工复制目录。
+ */
+export function syncDevPluginPackages(): Promise<string[]> {
+  return invoke<string[]>("sync_dev_plugin_packages");
 }
 
 /**

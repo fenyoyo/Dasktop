@@ -8,6 +8,7 @@ import {
   resetPluginWindowSize as forgetPluginWindowSize,
   savePluginHotkey,
   savePluginWindowSize as rememberPluginWindowSize,
+  syncPluginPackagesFromRepo,
   type PluginRuntimeSnapshot,
 } from "@/entities/pluginPackage";
 import { openPluginRoot } from "@/entities/pluginPackage/api";
@@ -29,6 +30,13 @@ export interface SettingsPluginsContext {
   openPluginPage: (pluginId: string) => Promise<void>;
   /** 重新扫描插件目录。 */
   reloadPlugins: () => Promise<void>;
+  /**
+   * 把仓库里的插件包同步到插件目录（开发调试用），同步后自动重扫。
+   *
+   * 直接接加载器的实现而不是再包一层 try/catch：加载器已经保证不抛错，
+   * 失败会落在快照的 `error` 字段里由面板展示，这里再兜一层只会把错误吞掉。
+   */
+  syncPlugins: () => Promise<void>;
   /** 忘掉某个插件记住的窗口尺寸，让它回到清单声明或全局默认值。 */
   resetPluginWindowSize: (pluginId: string) => Promise<void>;
   /** 只读运行时快照，面板直接消费。 */
@@ -125,6 +133,7 @@ export function useSettingsPlugins(): SettingsPluginsContext {
     runtime,
     savePluginHotkey: rememberPluginHotkey,
     savePluginWindowSize: rememberWindowSize,
+    syncPlugins: syncPluginPackagesFromRepo,
     reloadPluginHotkeys: refreshPluginHotkeys,
   };
 }

@@ -32,7 +32,7 @@ pub use hotkey::{
 };
 pub use protocol::handle_plugin_asset_request;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -169,8 +169,7 @@ pub async fn open_plugin_window(
 
     // 尺寸在开窗前一次性定下来：窗口已经存在时不重新设置大小——用户在插件页面里可能
     // 已经拖着自己要的尺寸，重载他调整过的值只会让人以为「拖了没记住」。
-    let window_size =
-        window_preference::resolve_window_size(app, plugin_id, Some(&manifest)).await;
+    let window_size = window_preference::resolve_window_size(app, plugin_id, Some(&manifest)).await;
 
     // 标准插件窗口沿用全局最小尺寸下限；下限与 contract.rs 的 PLUGIN_WINDOW_MIN_SIZE 保持一致，
     // 否则 WebView 会把低于下限的窗口自行拉回下限，「设了 200×200 读回来却是下限」就源于两处不一致。
@@ -392,6 +391,25 @@ pub fn open_plugin_root(app: &AppHandle) -> Result<(), String> {
     plugin_package::ensure_root(&root)?;
 
     shell_file::open_folder_in_explorer(&root.to_string_lossy())
+}
+
+/// 同步源目录相对 `src-tauri` 的位置，也就是仓库根目录下的 `plugins/`。
+const DEV_PLUGIN_SOURCE_SUBDIR: &str = "../plugins";
+
+/// 把仓库里的插件包同步到插件根目录，返回本次同步的包 id。
+///
+/// **这是开发调试用的命令，不是给用户的功能**：源目录靠 `CARGO_MANIFEST_DIR` 在编译期定位，
+/// 拿到的是构建机器上的源码目录。开发时它确实指向本地仓库，所以「改完插件源码点一下按钮」
+/// 就能生效——不需要重新编译，也不用手工复制目录。
+///
+/// 反过来，打包后的应用里这个路径通常不存在，命令会返回明确错误而不是静默失败。这条命令
+/// 刻意不做「源码不在就用内嵌示例包代替」的兜底：那会把「我改的文件没生效」伪装成
+/// 「同步成功了」，而调试按钮最不能骗的就是这一点。
+pub fn sync_dev_plugin_packages(app: &AppHandle) -> Result<Vec<String>, String> {
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEV_PLUGIN_SOURCE_SUBDIR);
+    let target_root = resolve_plugin_root(app)?;
+
+    plugin_package::sync_packages_from_source(&source_root, &target_root)
 }
 
 /* -------------------------------------------------------------------------- */

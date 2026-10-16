@@ -5,7 +5,7 @@ import {
   savePluginWindowSize as persistPluginWindowSize,
 } from "@/shared/storage/database";
 import { listenPluginNotification } from "@/shared/ipc/pluginPackage";
-import { listPluginHotkeys, listPlugins, setPluginHotkey } from "./api";
+import { listPluginHotkeys, listPlugins, setPluginHotkey, syncDevPluginPackages } from "./api";
 import { resolvePluginPermissions } from "./permissions";
 import {
   PLUGIN_NOTIFICATION_LIMIT,
@@ -75,6 +75,28 @@ export async function reloadPluginRuntime(): Promise<void> {
   initializationPromise = scanPluginPackages();
 
   return initializationPromise;
+}
+
+/**
+ * 把仓库里的插件包同步到插件根目录（开发调试用），成功后重新扫描。
+ *
+ * 与 [`reloadPluginRuntime`] 的区别：重新加载只是重读磁盘上已有的包，本函数会先从源码目录
+ * 把整个包盖过去。失败不向外抛，而是写进快照的 `error` 字段——面板上已经有一处专门的错误
+ * 展示位，同步失败与扫描失败共用它，用户不必在两个地方找原因（最常见的失败恰恰是
+ * 「源码目录不存在」，这句话必须让用户看见）。
+ */
+export async function syncPluginPackagesFromRepo(): Promise<void> {
+  updateSnapshot({ error: null, loading: true });
+
+  try {
+    await syncDevPluginPackages();
+  } catch (error) {
+    updateSnapshot({ error: describeError(error), loading: false });
+
+    return;
+  }
+
+  await reloadPluginRuntime();
 }
 
 /**

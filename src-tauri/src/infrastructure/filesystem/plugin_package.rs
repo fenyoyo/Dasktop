@@ -106,12 +106,8 @@ pub fn seed_sample_package_if_empty(root: &Path) -> Result<bool, String> {
 /// 用户需要知道是哪一个，否则只能看到一个「无法写入示例插件入口」的笼统提示。
 fn write_sample_package(root: &Path, package: &SamplePackage) -> Result<(), String> {
     let package_dir = root.join(package.package_id);
-    std::fs::create_dir_all(&package_dir).map_err(|error| {
-        format!(
-            "无法创建示例插件目录 {}：{error}",
-            package_dir.display()
-        )
-    })?;
+    std::fs::create_dir_all(&package_dir)
+        .map_err(|error| format!("无法创建示例插件目录 {}：{error}", package_dir.display()))?;
 
     std::fs::write(
         package_dir.join(PLUGIN_MANIFEST_FILE_NAME),
@@ -126,6 +122,112 @@ fn write_sample_package(root: &Path, package: &SamplePackage) -> Result<(), Stri
                 package.package_id, file.file_name
             )
         })?;
+    }
+
+    Ok(())
+}
+
+/// 插件写在包根目录下的状态文件名，同步时跳过它。
+///
+/// 它是插件跑起来之后自己产生的用户数据（如 http-console 的请求历史），不是插件包的一部分：
+/// 覆盖它等于每次同步都把用户攒下的内容清空。子目录里的同名文件不算，那属于插件的普通资源。
+const PLUGIN_STATE_FILE_NAME: &str = "state.json";
+
+/// 把源目录下的全部插件包复制进插件根目录，返回本次同步的包 id。
+///
+/// 这是给开发调试用的：源目录是仓库里的 `plugins/`，只在「源码目录还在」的机器上有意义。
+/// 落盘策略是**逐文件覆盖、绝不删除**——目标目录里已有的插件（包括用户自己放进去的包）
+/// 一律原样保留，同步只把源包的内容盖上去。反过来做（先清空再复制）会把用户插件一起抹掉。
+pub fn sync_packages_from_source(
+    source_root: &Path,
+    target_root: &Path,
+) -> Result<Vec<String>, String> {
+    if !source_root.is_dir() {
+        return Err(format!(
+            "同步源目录不存在：{}（该功能只在源码目录下可用）",
+            source_root.display()
+        ));
+    }
+
+    ensure_root(target_root)?;
+
+    let entries = std::fs::read_dir(source_root)
+        .map_err(|error| format!("无法读取同步源目录 {}：{error}", source_root.display()))?;
+
+    let mut synced = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("同步源目录项读取失败：{error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("同步源目录项类型读取失败：{error}"))?;
+
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let package_id = entry.file_name().to_string_lossy().to_string();
+        if is_reserved_directory_name(&package_id) {
+            continue;
+        }
+
+        let package_dir = target_root.join(&package_id);
+        std::fs::create_dir_all(&package_dir)
+            .map_err(|error| format!("无法创建同步目标目录 {}：{error}", package_dir.display()))?;
+        copy_package_tree(&entry.path(), &package_dir, "")?;
+
+        synced.push(package_id);
+    }
+
+    synced.sort();
+
+    Ok(synced)
+}
+
+/// 递归复制一个包目录下的全部文件。
+///
+/// `relative_path` 累积当前层级在**包内**的相对路径，用来区分「包根目录的 state.json」（
+/// 插件的用户数据，跳过）与「子目录里的同名文件」（插件自己的资源，照抄）。
+fn copy_package_tree(
+    source_dir: &Path,
+    target_dir: &Path,
+    relative_path: &str,
+) -> Result<(), String> {
+    let entries = std::fs::read_dir(source_dir)
+        .map_err(|error| format!("无法读取插件包目录 {}：{error}", source_dir.display()))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("插件包目录项读取失败：{error}"))?;
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("插件包目录项类型读取失败：{error}"))?;
+        let child_relative_path = if relative_path.is_empty() {
+            file_name.clone()
+        } else {
+            format!("{relative_path}/{file_name}")
+        };
+
+        if file_type.is_dir() {
+            let child_target = target_dir.join(&file_name);
+            std::fs::create_dir_all(&child_target).map_err(|error| {
+                format!("无法创建同步目标目录 {}：{error}", child_target.display())
+            })?;
+            copy_package_tree(&entry.path(), &child_target, &child_relative_path)?;
+            continue;
+        }
+
+        if !file_type.is_file() {
+            continue;
+        }
+
+        if relative_path.is_empty() && file_name == PLUGIN_STATE_FILE_NAME {
+            continue;
+        }
+
+        let target_file = target_dir.join(&file_name);
+        std::fs::copy(entry.path(), &target_file)
+            .map_err(|error| format!("无法同步插件文件 {}：{error}", child_relative_path))?;
     }
 
     Ok(())
@@ -307,7 +409,7 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
                 manifest.id
             )),
             window_size: PluginWindowSizeView::global_default(),
-            };
+        };
     }
 
     // 入口页面必须真实存在。拦在扫描期而不是等用户点开插件窗口：那时只会看到一片
@@ -523,14 +625,13 @@ mod tests {
             let package_dir = fixture.root.join(package.package_id);
 
             for file in package.files {
-                let contents = read_package_asset(&package_dir, file.file_name).unwrap_or_else(
-                    |error| {
+                let contents =
+                    read_package_asset(&package_dir, file.file_name).unwrap_or_else(|error| {
                         panic!(
                             "示例包 {} 的 {} 应可读取：{error}",
                             package.package_id, file.file_name
                         )
-                    },
-                );
+                    });
 
                 assert_eq!(
                     contents.as_slice(),
@@ -553,6 +654,70 @@ mod tests {
                 package.package_id
             );
         }
+    }
+
+    /// 同步用例：盯住「复制哪些、跳过哪些、保留哪些」三条规则。
+    ///
+    /// 最要紧的是**跳过包根目录的 state.json**：它是插件运行时自己写的用户数据，
+    /// 被同步覆盖的话，用户每点一次同步就丢一次插件里的历史记录，而且全程没有任何报错。
+    #[test]
+    fn sync_packages_copies_source_and_keeps_user_data() {
+        let source = TempPackage::new("sync-source");
+        let target = TempPackage::new("sync-target");
+
+        // 源侧：两个包，其中一个带包根状态文件与子目录资源；另有一个宿主保留目录。
+        let source_package = write_package(&source, "alpha", "alpha");
+        std::fs::write(
+            source_package.join(PLUGIN_STATE_FILE_NAME),
+            r#"{"from":"source"}"#,
+        )
+        .expect("源状态文件应可写入");
+        std::fs::create_dir_all(source_package.join("assets")).expect("源子目录应可创建");
+        std::fs::write(source_package.join("assets/data.json"), "{}")
+            .expect("源子目录文件应可写入");
+        std::fs::create_dir_all(source.root.join("_draft")).expect("保留目录应可创建");
+        std::fs::write(
+            source.root.join("_draft").join(PLUGIN_MANIFEST_FILE_NAME),
+            "{}",
+        )
+        .expect("保留目录清单应可写入");
+        write_package(&source, "beta", "beta");
+
+        // 目标侧：同名包里已经有用户数据，另有一个源里根本不存在的包。
+        let target_package = write_package(&target, "alpha", "alpha");
+        std::fs::write(
+            target_package.join(PLUGIN_STATE_FILE_NAME),
+            r#"{"from":"user"}"#,
+        )
+        .expect("目标状态文件应可写入");
+        write_package(&target, "mine", "mine");
+
+        let synced = sync_packages_from_source(&source.root, &target.root).expect("同步应成功");
+
+        assert_eq!(
+            synced,
+            vec!["alpha".to_string(), "beta".to_string()],
+            "同步结果应是源目录下的包 id，且按字母序返回"
+        );
+        assert!(
+            !target.root.join("_draft").exists(),
+            "宿主保留目录（_ 前缀）不应被同步"
+        );
+        assert!(target.root.join("beta").exists(), "源里的新包应被复制过去");
+        assert!(
+            target.root.join("alpha").join("assets/data.json").exists(),
+            "包内子目录资源应被递归复制"
+        );
+        assert!(
+            target.root.join("mine").exists(),
+            "源里没有的包属于用户自己的插件，同步不应删除它"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target_package.join(PLUGIN_STATE_FILE_NAME))
+                .expect("状态文件应仍可读"),
+            r#"{"from":"user"}"#,
+            "包根目录的 state.json 是用户数据，不允许被同步覆盖"
+        );
     }
 
     /// 清单声明的 `entry` 必须真的存在于包目录里。
@@ -617,7 +782,11 @@ mod tests {
 
         assert!(record.manifest.is_none(), "id 不一致时不应给出清单");
         assert!(
-            record.error.as_deref().unwrap_or_default().contains("不一致"),
+            record
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("不一致"),
             "错误信息应指出 id 与目录名不一致：{:?}",
             record.error
         );
@@ -755,7 +924,14 @@ mod tests {
 
     #[test]
     fn rejects_invalid_plugin_ids() {
-        for plugin_id in ["../escape", "a/b", "a\\b", "", "state.json:hidden", "滥用插件"] {
+        for plugin_id in [
+            "../escape",
+            "a/b",
+            "a\\b",
+            "",
+            "state.json:hidden",
+            "滥用插件",
+        ] {
             assert!(!is_valid_plugin_id(plugin_id), "应拒绝 id：{plugin_id}");
         }
 

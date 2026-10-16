@@ -178,3 +178,12 @@ pub async fn plugin_http_request(
 pub fn open_plugin_root(app: AppHandle) -> Result<(), String> {
     plugin::open_plugin_root(&app)
 }
+
+/// 把仓库里的插件包同步到插件根目录（开发调试用），返回本次同步的包 id。
+///
+/// 界面入口是设置页「插件」面板里插件目录那一行的「同步」按钮。源目录由 `CARGO_MANIFEST_DIR`
+/// 在编译期定位，所以这条命令只在源码目录下有意义；打包后的应用调用它会拿到明确错误。
+#[tauri::command]
+pub fn sync_dev_plugin_packages(app: AppHandle) -> Result<Vec<String>, String> {
+    plugin::sync_dev_plugin_packages(&app)
+}

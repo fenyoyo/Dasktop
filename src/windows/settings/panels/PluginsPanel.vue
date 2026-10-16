@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref } from "vue";
 import {
   ArrowUpRight,
   Check,
+  Download,
   ExternalLink,
   Pencil,
   Puzzle,
@@ -48,6 +49,7 @@ const emit = defineEmits<{
   openPage: [pluginId: string];
   openRoot: [];
   reload: [];
+  syncPlugins: [];
   pluginWindowSizeChange: [key: PluginWindowSizeSettingKey, value: number];
   pluginWindowSizeReset: [pluginId: string];
   pluginWindowSizeSave: [pluginId: string, width: number, height: number];
@@ -120,7 +122,10 @@ const draftHeight = ref<number>(0);
  * 权限标签的说明文案从权限映射表派生，界面与真实能力始终同源。
  */
 const PERMISSION_SUMMARIES = new Map<string, string>(
-  PLUGIN_PERMISSION_DEFINITIONS.map((definition) => [definition.permission, definition.summary]),
+  PLUGIN_PERMISSION_DEFINITIONS.map((definition) => [
+    definition.permission,
+    definition.summary,
+  ]),
 );
 
 /**
@@ -191,7 +196,9 @@ function startEditingWindowSize(record: PluginRuntimeRecord): void {
  * 「没填」应当按没改处理，用户只是还没决定。
  */
 function commitWindowSize(record: PluginRuntimeRecord): void {
-  const width = Number.isFinite(draftWidth.value) ? draftWidth.value : record.windowSize.width;
+  const width = Number.isFinite(draftWidth.value)
+    ? draftWidth.value
+    : record.windowSize.width;
   const height = Number.isFinite(draftHeight.value)
     ? draftHeight.value
     : record.windowSize.height;
@@ -213,7 +220,10 @@ function cancelWindowSizeEditing(): void {
  * 按 `@change` 而不是每次按键提交：数字输入框在输入过程中会出现空值与中间态，
  * 逐字保存会把没写完的值写进数据库。
  */
-function changeGlobalWindowSize(key: PluginWindowSizeSettingKey, rawValue: string): void {
+function changeGlobalWindowSize(
+  key: PluginWindowSizeSettingKey,
+  rawValue: string,
+): void {
   const numeric = Number(rawValue);
 
   if (!Number.isFinite(numeric)) {
@@ -230,8 +240,16 @@ function changeGlobalWindowSize(key: PluginWindowSizeSettingKey, rawValue: strin
  * 走既有通道才能保证与其它设置的写入路径完全一致。
  */
 function resetGlobalWindowSize(): void {
-  emit("pluginWindowSizeChange", "pluginWindowWidth", PLUGIN_WINDOW_DEFAULT_SIZE.width);
-  emit("pluginWindowSizeChange", "pluginWindowHeight", PLUGIN_WINDOW_DEFAULT_SIZE.height);
+  emit(
+    "pluginWindowSizeChange",
+    "pluginWindowWidth",
+    PLUGIN_WINDOW_DEFAULT_SIZE.width,
+  );
+  emit(
+    "pluginWindowSizeChange",
+    "pluginWindowHeight",
+    PLUGIN_WINDOW_DEFAULT_SIZE.height,
+  );
 }
 
 /* ---- 快捷键管理 ---- */
@@ -313,7 +331,8 @@ function startEditingHotkey(hotkey: PluginHotkeyRegistration): void {
   // 状态永远停在「未配置快捷键」。直接挂 window 级捕获（捕获阶段），按键无论焦点在哪都被抓到。
   const handler = (event: KeyboardEvent): void => captureHotkey(event);
   window.addEventListener("keydown", handler, true);
-  removeCaptureListener = (): void => window.removeEventListener("keydown", handler, true);
+  removeCaptureListener = (): void =>
+    window.removeEventListener("keydown", handler, true);
 
   // 仍把焦点给输入框作为回退：极少数平台 window 级捕获拿不到物理键位时，
   // 聚焦后的输入框 keydown 还能兜底抓一次。用 id 定位，避开 v-for 的 ref 数组陷阱。
@@ -323,7 +342,14 @@ function startEditingHotkey(hotkey: PluginHotkeyRegistration): void {
 /**
  * 捕获热键时忽略的「裸修饰键」：它们单独按下不组成完整组合键，等主键落下再一起记录。
  */
-const HOTKEY_MODIFIER_KEYS = new Set(["Control", "Alt", "Shift", "Meta", "Win", "OS"]);
+const HOTKEY_MODIFIER_KEYS = new Set([
+  "Control",
+  "Alt",
+  "Shift",
+  "Meta",
+  "Win",
+  "OS",
+]);
 
 /**
  * 从按键事件里取出主键名。
@@ -443,7 +469,12 @@ function commitHotkey(hotkey: PluginHotkeyRegistration): void {
  * 当前声明的 accelerator 作为覆盖值。
  */
 function toggleHotkeyEnabled(hotkey: PluginHotkeyRegistration): void {
-  emit("pluginHotkeySave", hotkey.pluginId, hotkey.accelerator, !hotkey.enabled);
+  emit(
+    "pluginHotkeySave",
+    hotkey.pluginId,
+    hotkey.accelerator,
+    !hotkey.enabled,
+  );
 }
 
 /**
@@ -469,20 +500,34 @@ onUnmounted(stopCapturing);
     <SettingGroup>
       <SettingRow title="插件目录" :divided="true">
         <template #description>
-          <p class="mt-1 truncate text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">
+          <p
+            class="mt-1 truncate text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]"
+          >
             {{ runtime.rootPath || "读取中" }}
           </p>
         </template>
 
-        <button
-          :class="ACTION_BUTTON_CLASS"
-          :disabled="!runtime.rootPath"
-          type="button"
-          @click="emit('openRoot')"
-        >
-          <ExternalLink :size="15" />
-          打开
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            :class="ACTION_BUTTON_CLASS"
+            :disabled="!runtime.rootPath || runtime.loading"
+            title="把工程目录 plugins/ 下的插件包复制到插件目录，仅供开发调试"
+            type="button"
+            @click="emit('syncPlugins')"
+          >
+            <Download :size="15" />
+            同步
+          </button>
+          <button
+            :class="ACTION_BUTTON_CLASS"
+            :disabled="!runtime.rootPath"
+            type="button"
+            @click="emit('openRoot')"
+          >
+            <ExternalLink :size="15" />
+            打开
+          </button>
+        </div>
       </SettingRow>
 
       <SettingRow
@@ -499,9 +544,16 @@ onUnmounted(stopCapturing);
             :step="PLUGIN_WINDOW_SIZE_LIMITS.width.step"
             type="number"
             :value="settings.pluginWindowWidth"
-            @change="changeGlobalWindowSize('pluginWindowWidth', ($event.target as HTMLInputElement).value)"
+            @change="
+              changeGlobalWindowSize(
+                'pluginWindowWidth',
+                ($event.target as HTMLInputElement).value,
+              )
+            "
           />
-          <span aria-hidden="true" class="text-[12px] text-[#9aa0ac]">&times;</span>
+          <span aria-hidden="true" class="text-[12px] text-[#9aa0ac]"
+            >&times;</span
+          >
           <input
             aria-label="默认窗口高度"
             :class="NUMBER_INPUT_CLASS"
@@ -510,7 +562,12 @@ onUnmounted(stopCapturing);
             :step="PLUGIN_WINDOW_SIZE_LIMITS.height.step"
             type="number"
             :value="settings.pluginWindowHeight"
-            @change="changeGlobalWindowSize('pluginWindowHeight', ($event.target as HTMLInputElement).value)"
+            @change="
+              changeGlobalWindowSize(
+                'pluginWindowHeight',
+                ($event.target as HTMLInputElement).value,
+              )
+            "
           />
           <span class="text-[12px] text-[#9aa0ac]">px</span>
           <button
@@ -558,7 +615,9 @@ onUnmounted(stopCapturing);
             >
               {{ STATUS_LABELS[record.status] }}
             </span>
-            <span class="truncate text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">
+            <span
+              class="truncate text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]"
+            >
               {{ record.id }} · v{{ record.version || "未知" }}
               <template v-if="record.entry"> · {{ record.entry }}</template>
             </span>
@@ -591,7 +650,10 @@ onUnmounted(stopCapturing);
               {{ permission }}
             </span>
             <span
-              v-if="record.permissions.length === 0 && record.unknownPermissions.length === 0"
+              v-if="
+                record.permissions.length === 0 &&
+                record.unknownPermissions.length === 0
+              "
               class="text-[11px] text-[#9aa0ac] dark:text-[#7c828d]"
             >
               未声明能力
@@ -613,7 +675,9 @@ onUnmounted(stopCapturing);
                 @keydown.enter="commitWindowSize(record)"
                 @keydown.esc="cancelWindowSizeEditing"
               />
-              <span aria-hidden="true" class="text-[12px] text-[#9aa0ac]">&times;</span>
+              <span aria-hidden="true" class="text-[12px] text-[#9aa0ac]"
+                >&times;</span
+              >
               <input
                 v-model.number="draftHeight"
                 aria-label="插件窗口高度"
@@ -645,11 +709,17 @@ onUnmounted(stopCapturing);
             </template>
 
             <template v-else>
-              <span class="inline-flex items-center gap-1.5 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">
+              <span
+                class="inline-flex items-center gap-1.5 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]"
+              >
                 <Ruler :size="14" />
-                {{ record.windowSize.width }} &times; {{ record.windowSize.height }} px
+                {{ record.windowSize.width }} &times;
+                {{ record.windowSize.height }} px
                 <span class="text-[#9aa0ac] dark:text-[#7c828d]">
-                  · {{ PLUGIN_WINDOW_SIZE_SOURCE_LABELS[record.windowSize.source] }}
+                  ·
+                  {{
+                    PLUGIN_WINDOW_SIZE_SOURCE_LABELS[record.windowSize.source]
+                  }}
                 </span>
               </span>
               <button
@@ -679,7 +749,11 @@ onUnmounted(stopCapturing);
         <button
           :class="PRIMARY_BUTTON_CLASS"
           :disabled="record.status !== 'ready'"
-          :title="record.status === 'ready' ? '打开插件页面' : (record.error ?? '插件不可用')"
+          :title="
+            record.status === 'ready'
+              ? '打开插件页面'
+              : (record.error ?? '插件不可用')
+          "
           type="button"
           @click="emit('openPage', record.id)"
         >
@@ -690,7 +764,9 @@ onUnmounted(stopCapturing);
 
       <div v-if="runtime.records.length === 0" class="px-5 py-12 text-center">
         <Puzzle class="mx-auto text-[#b8bcc6] dark:text-[#6a7180]" :size="22" />
-        <p class="mt-2 text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">
+        <p
+          class="mt-2 text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]"
+        >
           {{ runtime.loading ? "正在扫描插件目录" : "还没有插件" }}
         </p>
         <p class="mt-1 text-[12px] text-[#707684] dark:text-[#9ca0aa]">
@@ -705,7 +781,11 @@ onUnmounted(stopCapturing);
         :divided="runtime.hotkeys.length > 0"
         title="快捷键"
       >
-        <button :class="ACTION_BUTTON_CLASS" type="button" @click="emit('pluginHotkeyReload')">
+        <button
+          :class="ACTION_BUTTON_CLASS"
+          type="button"
+          @click="emit('pluginHotkeyReload')"
+        >
           <RefreshCw :size="15" />
           刷新
         </button>
@@ -719,7 +799,9 @@ onUnmounted(stopCapturing);
         :title="pluginNames.get(hotkey.pluginId) ?? hotkey.pluginId"
       >
         <template #description>
-          <p class="mt-1.5 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">
+          <p
+            class="mt-1.5 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]"
+          >
             启动热键
           </p>
           <p
@@ -732,7 +814,10 @@ onUnmounted(stopCapturing);
 
         <div class="flex items-center gap-2">
           <button
-            :class="[ENABLED_TOGGLE_CLASS, hotkey.enabled ? ENABLED_ON_CLASS : ENABLED_OFF_CLASS]"
+            :class="[
+              ENABLED_TOGGLE_CLASS,
+              hotkey.enabled ? ENABLED_ON_CLASS : ENABLED_OFF_CLASS,
+            ]"
             type="button"
             @click="toggleHotkeyEnabled(hotkey)"
           >
@@ -750,7 +835,9 @@ onUnmounted(stopCapturing);
               type="text"
               @keydown="captureHotkey"
             />
-            <span class="text-[11px] leading-5 text-[#9aa0ac] dark:text-[#7c828d]">
+            <span
+              class="text-[11px] leading-5 text-[#9aa0ac] dark:text-[#7c828d]"
+            >
               按下要绑定的组合键
             </span>
             <button
@@ -772,7 +859,9 @@ onUnmounted(stopCapturing);
           </template>
 
           <template v-else>
-            <span class="text-[13px] leading-5 text-[#202229] dark:text-[#f4f4f5]">
+            <span
+              class="text-[13px] leading-5 text-[#202229] dark:text-[#f4f4f5]"
+            >
               {{ hotkey.accelerator }}
             </span>
             <button
@@ -812,7 +901,7 @@ onUnmounted(stopCapturing);
       v-if="runtime.error"
       class="mt-4 rounded-[8px] border border-[#f0c7c7] bg-[#fff6f6] px-4 py-3 text-[13px] text-[#9f1d1d] dark:border-[#5b2a2d] dark:bg-[#281619] dark:text-[#ffb4b4]"
     >
-      插件扫描失败：{{ runtime.error }}
+      插件目录操作失败：{{ runtime.error }}
     </div>
 
     <SettingGroup class="mt-4">
@@ -820,7 +909,8 @@ onUnmounted(stopCapturing);
         :description="
           runtime.notifications.length > 0
             ? `插件通过宿主能力发送，最多保留最近 ${runtime.notifications.length} 条`
-            : '插件通过宿主能力发送的通知会显示在这里，并同时写入插件日志'"
+            : '插件通过宿主能力发送的通知会显示在这里，并同时写入插件日志'
+        "
         :divided="runtime.notifications.length > 0"
         title="最近通知"
       />
@@ -829,17 +919,27 @@ onUnmounted(stopCapturing);
         v-for="(notification, index) in runtime.notifications"
         :key="`${notification.createdAt}-${index}`"
         class="px-5 py-3.5"
-        :class="index < runtime.notifications.length - 1 ? 'border-b border-[#e7e9ee] dark:border-[#292c34]' : ''"
+        :class="
+          index < runtime.notifications.length - 1
+            ? 'border-b border-[#e7e9ee] dark:border-[#292c34]'
+            : ''
+        "
       >
         <div class="flex items-center gap-2">
-          <strong class="truncate text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">
+          <strong
+            class="truncate text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]"
+          >
             {{ notification.title }}
           </strong>
-          <span class="ml-auto shrink-0 text-[11px] text-[#8b909b] dark:text-[#8b909b]">
+          <span
+            class="ml-auto shrink-0 text-[11px] text-[#8b909b] dark:text-[#8b909b]"
+          >
             {{ formatNotificationTime(notification.createdAt) }}
           </span>
         </div>
-        <p class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">
+        <p
+          class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]"
+        >
           {{ notification.message }}
         </p>
         <p class="mt-1 text-[11px] text-[#9aa0ac] dark:text-[#7c828d]">

@@ -21,6 +21,7 @@ export {
   resetPluginWindowSize,
   savePluginHotkey,
   savePluginWindowSize,
+  syncPluginPackagesFromRepo,
 } from "./loader";
 
 export { closePluginWindow, PLUGIN_WINDOW_LABEL_PREFIX, pluginWindowLabel } from "./window";

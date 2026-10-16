@@ -69,6 +69,7 @@ commands.allow = [
   "open_plugin_root",
   "open_plugin_window",
   "set_plugin_hotkey",
+  "sync_dev_plugin_packages",
   # app
   "is_autostart_enabled",
   "is_autostart_launch",

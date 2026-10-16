@@ -194,6 +194,7 @@ function changeActiveSection(section: SettingsSection): void {
                   @plugin-hotkey-save="settingsPlugins.savePluginHotkey"
                   @plugin-hotkey-reload="settingsPlugins.reloadPluginHotkeys"
                   @reload="settingsPlugins.reloadPlugins"
+                  @sync-plugins="settingsPlugins.syncPlugins"
                 />
                 <AboutPanel
                   v-else-if="activeSection === 'about'"
