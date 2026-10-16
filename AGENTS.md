@@ -1,5 +1,12 @@
 # Dasktop Agent Notes
 
+## 项目导览
+
+- 首次接手任务前，先读 [docs/project-guide.md](docs/project-guide.md)：技术栈、五类窗口模型、
+  Rust/前端分层、SQLite 表结构、桌面层 Z 序、插件双层 ACL、常见改动落点与易错点
+- 环境搭建与构建踩坑见 [docs/development.md](docs/development.md)；改 Box 窗口层级或插件框架前，
+  必须先读 docs/ 下对应专题文档
+
 ## 文件编码
 
 - 读取、编辑、创建项目文件时必须使用 UTF-8 编码
