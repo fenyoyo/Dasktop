@@ -5,6 +5,12 @@
   "description": "把文本生成二维码，也支持识别剪贴板里的二维码图片。",
   "entry": "index.html",
   "icon": "icon.svg",
-  "permissions": ["clipboard:read", "clipboard:write", "ui:notify"],
+  "permissions": [
+    "clipboard:read",
+    "clipboard:write",
+    "fs:save",
+    "screen:capture",
+    "ui:notify"
+  ],
   "window": { "width": 720, "height": 850 }
 }

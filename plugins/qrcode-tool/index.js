@@ -1,9 +1,9 @@
-﻿/*
+/*
  * 二维码工具逻辑。
  *
  * 功能：生成二维码到 canvas，解析图片中的二维码。
  * 依赖两个 UMD 库：qrcode.js（生成）与 jsQR.js（解析）。
- * 宿主能力：clipboard:read / clipboard:write / ui:notify。
+ * 宿主能力：clipboard:read / clipboard:write / fs:save / screen:capture / ui:notify。
  */
 
 const STORAGE_KEY = "qrcode-tool:generate-text";
@@ -23,8 +23,8 @@ const scanDrop = document.getElementById("scan-drop");
 const scanFile = document.getElementById("scan-file");
 const scanPaste = document.getElementById("scan-paste");
 const scanSelect = document.getElementById("scan-select");
+const scanScreenshot = document.getElementById("scan-screenshot");
 const scanPreview = document.getElementById("scan-preview");
-const scanPreviewHint = document.getElementById("scan-preview-hint");
 const scanResult = document.getElementById("scan-result");
 const scanCopy = document.getElementById("scan-copy");
 const scanClear = document.getElementById("scan-clear");
@@ -48,18 +48,6 @@ async function copyText(text) {
   }
 
   await dasktop.clipboard.write(text);
-}
-
-/**
- * 从剪贴板读取文本或图片。能力桥当前只暴露文本读取；图片走剪贴板文本兜底，
- * 后续如果宿主开放二进制剪贴板能力再扩展。
- */
-async function readClipboardText() {
-  if (!window.dasktop) {
-    throw new Error("宿主能力桥不可用");
-  }
-
-  return dasktop.clipboard.read();
 }
 
 /**
@@ -202,17 +190,56 @@ async function handleCopyGenerateImage() {
   }
 }
 
-function handleSaveGenerateImage() {
+/**
+ * 从 data URL 中取出 base64 载荷。
+ *
+ * 宿主保存文件只接受纯 base64（不含 `data:<mime>;base64,` 前缀），而 canvas 与宿主的
+ * 图片能力给出的都是 data URL，所以在这条边界上剥一次前缀。
+ *
+ * @param {string} dataUrl 完整的 data URL
+ * @returns {string} base64 载荷
+ */
+function dataUrlPayload(dataUrl) {
+  const commaIndex = dataUrl.indexOf(",");
+
+  return commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
+}
+
+/**
+ * 保存生成的二维码图片。
+ *
+ * 走宿主能力 `fs:save`：宿主会弹出系统保存对话框，由用户当场决定落在哪个目录，并把
+ * 最终路径回传。之前用 `<a download>` 是行不通的——WebView2 会静默存到默认下载目录，
+ * 用户既没得选、也无从知道文件去哪了，而「提示保存路径」恰恰是这一步的要点。
+ */
+async function handleSaveGenerateImage() {
   if (!lastGeneratedDataUrl) {
     setStatus("没有可保存的图片", "error");
     return;
   }
 
-  const link = document.createElement("a");
-  link.href = lastGeneratedDataUrl;
-  link.download = `qrcode-${Date.now()}.png`;
-  link.click();
-  setStatus("图片已开始下载", "ok");
+  if (!window.dasktop || !dasktop.has("fs:save")) {
+    setStatus("未获得文件保存权限，无法保存图片", "error");
+    return;
+  }
+
+  try {
+    const path = await dasktop.file.save(
+      `qrcode-${Date.now()}.png`,
+      dataUrlPayload(lastGeneratedDataUrl),
+    );
+
+    // 用户点了「取消」：这不是失败，正常告知即可。
+    if (!path) {
+      setStatus("已取消保存", "muted");
+      return;
+    }
+
+    setStatus(`图片已保存到 ${path}`, "ok");
+    await notify("二维码工具", `图片已保存到 ${path}`);
+  } catch (error) {
+    setStatus(`保存失败：${error.message || error}`, "error");
+  }
 }
 
 /* ------------------------------ 解析二维码 ------------------------------ */
@@ -240,32 +267,38 @@ function decodeQrCode(imageData) {
   });
 }
 
+/**
+ * 显示待解析的图片。
+ *
+ * 图片就地落在拖放框里，与空态提示共用同一个盒子：切换 `has-image` 让拖放框收起
+ * 「拖放 / 粘贴 / 点选」提示、改显示图片本身，因此解析页不再需要独立的预览区。
+ * 拖放框仍保持可点击，点图片即可重新选一张替换。
+ */
 function displayScanImage(src) {
   scanPreview.src = src;
-  scanPreview.hidden = false;
-  scanPreview.classList.add("visible");
+  scanDrop.classList.add("has-image");
 }
 
 function clearScanPreview() {
   scanPreview.src = "";
-  scanPreview.hidden = true;
-  scanPreview.classList.remove("visible");
+  scanDrop.classList.remove("has-image");
   scanResult.value = "";
   scanCopy.disabled = true;
 }
 
-async function processImageFile(file) {
-  if (!file || !file.type.startsWith("image/")) {
-    setStatus("请选择图片文件", "error");
-    return;
-  }
-
-  const url = URL.createObjectURL(file);
-  displayScanImage(url);
+/**
+ * 加载图片来源并解析其中的二维码。src 支持 blob URL、data URL 等浏览器可加载的形式，
+ * 让「本地文件」与「屏幕截图」两条输入路径共用同一套解码流程。
+ *
+ * @param {string} src 图片地址
+ */
+async function processImageSource(src) {
+  displayScanImage(src);
 
   const image = new Image();
-  image.src = url;
 
+  // 先挂事件再赋 src：本地 blob / data URL 可能命中缓存，载入回调有机会在赋值同一轮
+  // 就被触发，反过来写会漏掉这次回调，表现为「选了图却一直没结果」。
   image.onload = async () => {
     try {
       const imageData = getImageDataFromImage(image);
@@ -289,37 +322,75 @@ async function processImageFile(file) {
   image.onerror = () => {
     setStatus("图片加载失败", "error");
   };
+
+  image.src = src;
 }
 
+async function processImageFile(file) {
+  if (!file || !file.type.startsWith("image/")) {
+    setStatus("请选择图片文件", "error");
+    return;
+  }
+
+  // 这一步的异常必须落到状态栏：调用方是 change / drop 事件的监听器，没人接住 rejection，
+  // 一旦抛错用户看到的就是「点了完全没反应」，而真正原因只留在控制台里。
+  try {
+    await processImageSource(URL.createObjectURL(file));
+  } catch (error) {
+    setStatus(`读取图片失败：${error.message || error}`, "error");
+  }
+}
+
+/**
+ * 从剪贴板粘贴：把剪贴板里的图片直接拿去做解析。
+ *
+ * 走宿主能力 `clipboard:read` 的图片接口，不依赖浏览器 Clipboard API——插件页面跑在
+ * 自定义协议下，`navigator.clipboard.read()` 会被权限判定直接拒掉，这正是这条路径原先
+ * 点了没反应的原因。宿主返回的是已经按实际格式拼好 MIME 的完整 data URL（位图会编码成
+ * PNG，在资源管理器里复制的图片文件则按原格式透传），所以这里不能再写死图片类型，
+ * 拿到什么就直接交给同一条解码流程。
+ */
 async function handlePasteScan() {
   try {
-    // 优先尝试读取系统剪贴板里的图片文件（如果宿主未来支持）。
-    // 当前能力桥只暴露文本读取，因此先尝试宿主文本，再回退到 Clipboard API 的图片。
-    if (navigator.clipboard && navigator.clipboard.read) {
-      const items = await navigator.clipboard.read();
+    const dataUrl = await dasktop.clipboard.readImage();
 
-      for (const item of items) {
-        const imageType = item.types.find((type) => type.startsWith("image/"));
-
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          await processImageFile(blob);
-          return;
-        }
-      }
+    if (!dataUrl) {
+      // 剪贴板里没有图片（比如复制的是文字）属于正常情况，引导用户改成复制一张图片。
+      setStatus("剪贴板中没有图片，请复制一张图片或图片文件后再粘贴", "error");
+      return;
     }
 
-    // 兜底：读取剪贴板文本。如果文本是图片 URL 或 base64，不做额外处理；
-    // 更常见的场景是用户复制了图片文件，此时文本读取拿不到东西。
-    const text = await readClipboardText();
-
-    if (text) {
-      setStatus("剪贴板中是文本而非图片，请复制图片后再粘贴", "error");
-    } else {
-      setStatus("剪贴板中没有可识别的图片", "error");
-    }
+    await processImageSource(dataUrl);
   } catch (error) {
     setStatus(`粘贴失败：${error.message || error}`, "error");
+  }
+}
+
+/**
+ * 截屏识别：调用宿主能力弹出全屏框选层，由用户亲手框出二维码所在区域。
+ *
+ * 该调用会一直等待用户在屏幕上完成框选，因此这里不锁界面，只在状态栏提示当前进度；
+ * 用户取消框选时宿主返回 null，按「主动放弃」提示，而不是当成错误。
+ */
+async function handleScreenshotScan() {
+  if (!window.dasktop || !dasktop.has("screen:capture")) {
+    setStatus("未获得屏幕截图权限，无法截屏识别", "error");
+    return;
+  }
+
+  setStatus("请在屏幕上拖拽框选二维码区域，按 Esc 取消");
+
+  try {
+    const base64 = await dasktop.screen.capture();
+
+    if (!base64) {
+      setStatus("已取消截屏", "muted");
+      return;
+    }
+
+    await processImageSource(`data:image/png;base64,${base64}`);
+  } catch (error) {
+    setStatus(`截屏失败：${error.message || error}`, "error");
   }
 }
 
@@ -394,6 +465,7 @@ function bindEvents() {
   });
 
   scanFile.addEventListener("change", handleFileInputChange);
+  scanScreenshot.addEventListener("click", handleScreenshotScan);
   scanPaste.addEventListener("click", handlePasteScan);
   scanSelect.addEventListener("click", handleSelectFile);
   scanCopy.addEventListener("click", handleCopyScanResult);
@@ -421,12 +493,17 @@ function checkBridge() {
     generateCopyText.disabled = true;
     generateCopyImage.disabled = true;
     scanPaste.disabled = true;
+    scanScreenshot.disabled = true;
     scanCopy.disabled = true;
     return;
   }
 
   if (!dasktop.has("clipboard:read")) {
     scanPaste.disabled = true;
+  }
+
+  if (!dasktop.has("screen:capture")) {
+    scanScreenshot.disabled = true;
   }
 
   if (!dasktop.has("clipboard:write")) {

@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
@@ -46,27 +46,45 @@
 
           <label class="field compact">
             <span>单元格大小</span>
-            <input id="generate-cell" type="number" min="2" max="20" value="6" />
+            <input
+              id="generate-cell"
+              type="number"
+              min="2"
+              max="20"
+              value="6"
+            />
           </label>
 
           <label class="field compact">
             <span>边距</span>
-            <input id="generate-margin" type="number" min="0" max="10" value="2" />
+            <input
+              id="generate-margin"
+              type="number"
+              min="0"
+              max="10"
+              value="2"
+            />
           </label>
         </div>
 
         <div class="actions prominent">
-          <button id="generate-btn" class="primary large" type="button">⚡ 生成二维码</button>
+          <button id="generate-btn" class="primary large" type="button">
+            ⚡ 生成二维码
+          </button>
           <button id="generate-copy-text" type="button">📋 复制内容</button>
         </div>
 
         <div class="result-area">
           <canvas id="generate-canvas" width="0" height="0"></canvas>
-          <div id="generate-placeholder" class="placeholder">二维码将显示在这里</div>
+          <div id="generate-placeholder" class="placeholder">
+            二维码将显示在这里
+          </div>
         </div>
 
         <div class="actions secondary">
-          <button id="generate-copy-image" type="button" disabled>🖼️ 复制图片</button>
+          <button id="generate-copy-image" type="button" disabled>
+            🖼️ 复制图片
+          </button>
           <button id="generate-save" type="button" disabled>💾 保存图片</button>
         </div>
       </section>
@@ -82,22 +100,43 @@
         >
           <p>拖放二维码图片到这里</p>
           <p class="muted">或按 Ctrl+V 粘贴 / 点击选择文件</p>
-          <input id="scan-file" type="file" accept="image/*" hidden />
+          <!--
+            待解析图片就地显示在这个盒子里：未选图时展示上面的两条提示，拿到图片后由
+            displayScanImage 给 #scan-drop 加上 has-image，收起提示、换成图片本身。
+            这样解析页只有这一个媒体盒子，不必再多一个与之并排的空框。
+          -->
+          <img id="scan-preview" alt="待解析的二维码" />
         </div>
+
+        <!--
+          文件选择框刻意放在拖放框**外面**。
+          drop-zone 的点击处理器会调 scanFile.click() 打开文件框，而程序化点击同样会派发
+          click 事件并向上冒泡。若这个 input 还留在 #scan-drop 子树里，冒泡就会重新触达拖放
+          框的处理器 → 又一次 scanFile.click() → 无限递归直到栈溢出，症状就是「点了没反应、
+          文件框弹不出来」。放在框外，冒泡路径上不再有任何处理器，递归无从发生。
+        -->
+        <input id="scan-file" type="file" accept="image/*" hidden />
 
         <div class="actions prominent">
-          <button id="scan-paste" class="primary" type="button">📋 从剪贴板粘贴</button>
-          <button id="scan-select" class="primary" type="button">🖼️ 选择图片文件</button>
-        </div>
-
-        <div class="preview-area">
-          <img id="scan-preview" alt="待解析的二维码" hidden />
-          <span id="scan-preview-hint" class="placeholder">未选择图片</span>
+          <button id="scan-screenshot" class="primary" type="button">
+            📷 截屏识别
+          </button>
+          <button id="scan-paste" class="primary" type="button">
+            📋 从剪贴板粘贴
+          </button>
+          <button id="scan-select" class="primary" type="button">
+            🖼️ 选择图片文件
+          </button>
         </div>
 
         <label class="field">
           <span>解析结果</span>
-          <textarea id="scan-result" rows="4" readonly placeholder="解析结果会显示在这里"></textarea>
+          <textarea
+            id="scan-result"
+            rows="4"
+            readonly
+            placeholder="解析结果会显示在这里"
+          ></textarea>
         </label>
 
         <div class="actions secondary">

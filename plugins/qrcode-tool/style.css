@@ -1,4 +1,4 @@
-﻿/*
+/*
  * 二维码工具样式。
  * 使用系统字体与 prefers-color-scheme 跟随深浅色，不依赖宿主主题。
  */
@@ -328,8 +328,7 @@ textarea {
   }
 }
 
-.result-area,
-.preview-area {
+.result-area {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -391,31 +390,52 @@ textarea {
   font-size: 12px;
 }
 
-.preview-area {
-  min-height: 120px;
-  padding: 12px;
+/*
+ * 解析拖放框用固定高度，不随内容变化：空态是两条提示文字，选图后换成图片，
+ * 两种状态盒子一样高，上传图片不会再顶高整页、把下方的按钮和结果框挤走。
+ * 高度取 .drop-zone 的 min-height 之上一点，保证空态观感不变的同时给预览留出空间。
+ */
+#scan-drop {
+  height: 200px;
 }
 
+/*
+ * 待解析图片就显示在拖放框内部，与「拖放 / 粘贴 / 点选」提示共用同一个盒子：
+ * 空态显示提示文字，拿到图片后由 .has-image 收起文字、就地换成图片本身。
+ * 图片默认不占位，避免空态下拖放框被一张空 img 撑高。
+ *
+ * 图片按 max-width / max-height 约束在盒子内等比缩放，配合 object-fit: contain 完整显示；
+ * min-height: 0 必须保留——flex 子项默认以自身内容高度为最小尺寸，不抵消的话图片会顶破
+ * 上面的固定高度，等于没固定。
+ */
 #scan-preview {
+  display: none;
   max-width: 100%;
-  max-height: 240px;
+  max-height: 100%;
+  min-height: 0;
   object-fit: contain;
 }
 
-#scan-preview.visible {
+#scan-drop.has-image #scan-preview {
   display: block;
 }
 
-#scan-preview.visible + #scan-preview-hint {
+/* 有图时收起两条提示，避免图片和「拖放二维码图片到这里」上下叠着 */
+#scan-drop.has-image > p {
   display: none;
 }
 
+/*
+ * 状态栏要能完整显示保存路径。路径里没有空格，默认换行规则会把它当作一个超长单词处理，
+ * 直接撑出横向滚动条；改为允许在任意字符处断行，长路径才会折成多行显示出来。
+ */
 .status {
   padding: 10px 20px;
   font-size: 12px;
   border-top: 1px solid var(--border);
   text-align: center;
   min-height: 38px;
+  overflow-wrap: anywhere;
 }
 
 .status.error {
