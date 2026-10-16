@@ -2,6 +2,7 @@
   "id": "hello-dasktop",
   "name": "Hello Dasktop",
   "version": "0.3.0",
+  "description": "最小示例插件，演示能力桥的日志写入与系统通知。",
   "entry": "index.html",
   "icon": "icon.svg",
   "permissions": ["log:write", "ui:notify"]

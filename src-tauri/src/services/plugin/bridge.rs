@@ -96,6 +96,8 @@ mod tests {
             id: "demo".to_string(),
             name: "演示插件".to_string(),
             version: "1.0.0".to_string(),
+            // 测试桥配置生成，与展示文案无关；描述由清单定义、前端直接透传。
+            description: None,
             entry: "index.html".to_string(),
             // 测试桥配置生成，与图标无关；图标校验由 plugin_package 的测试单独覆盖。
             icon: None,

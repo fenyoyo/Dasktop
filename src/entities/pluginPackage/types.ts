@@ -53,6 +53,8 @@ export interface PluginHotkeyRegistration {
  * 不受宿主类型系统约束，窄化必须发生在运行期校验之后（见 `permissions.ts`）。
  */
 export interface PluginPackageManifest {
+  /** 一句话功能描述，可选；纯展示文本，面板插件列表直接透传，宿主不做内容校验。 */
+  description?: string;
   /** 入口页面相对插件包目录的路径，指向一份 HTML 文件。 */
   entry: string;
   /**
@@ -222,6 +224,8 @@ export type PluginRuntimeStatus = "failed" | "ready";
  * 否则用户在设置页里看不到任何线索，只能怀疑宿主坏了。
  */
 export interface PluginRuntimeRecord {
+  /** 一句话功能描述，从清单取得并去掉首尾空白；未声明或清单不可用时为空字符串。 */
+  description: string;
   /** 插件包绝对路径，便于用户对照磁盘排查。 */
   directoryPath: string;
   /** 入口页面文件名，从清单取得；清单不可用时为空字符串。 */

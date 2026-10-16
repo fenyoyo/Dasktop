@@ -2,6 +2,7 @@
   "id": "translator",
   "name": "翻译",
   "version": "0.2.0",
+  "description": "调用在线翻译接口翻译文本，译文一键写入剪贴板。",
   "entry": "index.html",
   "icon": "icon.svg",
   "permissions": ["net:request", "clipboard:write"],

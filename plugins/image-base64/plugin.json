@@ -2,6 +2,7 @@
   "id": "image-base64",
   "name": "图片 Base64 转换",
   "version": "0.1.0",
+  "description": "图片与 Base64 字符串互转，结果一键写入剪贴板。",
   "entry": "index.html",
   "icon": "icon.svg",
   "permissions": ["clipboard:read", "clipboard:write", "ui:notify"],

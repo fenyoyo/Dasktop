@@ -183,6 +183,9 @@ async function scanPluginPackages(): Promise<void> {
  */
 function describePackage(packageRecord: PluginPackageRecord): PluginRuntimeRecord {
   const base: PluginRuntimeRecord = {
+    // 描述先裁掉首尾空白：清单里只含空白字符的「声明」按未声明处理，
+    // 面板不必再为这种值判断要不要渲染描述行。
+    description: packageRecord.manifest?.description?.trim() ?? "",
     directoryPath: packageRecord.directoryPath,
     entry: packageRecord.manifest?.entry ?? "",
     error: null,

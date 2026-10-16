@@ -11,6 +11,7 @@
  *
  * 1. 清单可解析、id 与目录名一致、entry 非空且指向 HTML 并真实存在；
  *    声明了 icon 时，它必须指向真实存在、格式受支持且未逃出包目录的图片；
+ *    声明了 description 时，它必须是非空字符串；
  * 2. 清单声明的权限都在宿主已知集合内，且与 Rust 侧的权限常量集合一致；
  * 3. 包内每个 HTML / JS 里的相对引用都指向真实存在的文件，且没有逃出包目录；
  * 4. 包内每个 `.js` 都被某处引用到——写好了却没人引入，运行期就是一段死代码；
@@ -399,6 +400,7 @@ async function verifyPackage(
   }
 
   verifyIconDeclaration(pluginId, manifest.icon, allowedIconExtensions);
+  verifyDescriptionDeclaration(pluginId, manifest.description);
 
   const htmlFiles = await collectFiles(packageDir, /\.html?$/i);
   const scriptFiles = await collectFiles(packageDir, /\.m?js$/i);
@@ -509,6 +511,23 @@ function verifyIconDeclaration(pluginId, icon, allowedExtensions) {
 
   if (!existsSync(resolved.filePath)) {
     fail(pluginId, `icon「${declared}」指向不存在的文件`);
+  }
+}
+
+/**
+ * 校验清单声明的功能描述。
+ *
+ * description 是纯展示文本、不影响可用性，但「声明了就得是能直接上屏的文本」：
+ * 写成数字会让 Rust 端反序列化失败（整包不可用），空串会让面板渲染逻辑多处理一种
+ * 无意义取值，两种结果都不如提交前直接拦住。
+ */
+function verifyDescriptionDeclaration(pluginId, description) {
+  if (description === undefined) {
+    return;
+  }
+
+  if (typeof description !== "string" || description.trim() === "") {
+    fail(pluginId, "清单的 description 必须是非空字符串");
   }
 }
 

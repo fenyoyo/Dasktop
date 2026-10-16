@@ -2,6 +2,7 @@
   "id": "json-formatter",
   "name": "JSON 格式化工具",
   "version": "0.1.0",
+  "description": "读取剪贴板中的 JSON，格式化或压缩后写回剪贴板。",
   "entry": "index.html",
   "icon": "icon.svg",
   "permissions": ["clipboard:read", "clipboard:write"],

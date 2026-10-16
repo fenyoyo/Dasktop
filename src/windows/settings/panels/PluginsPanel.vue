@@ -644,6 +644,14 @@ onUnmounted(stopCapturing);
           </div>
         </template>
         <template #description>
+          <!-- 功能描述紧随名称之后；未声明时整行不渲染，不留空位。 -->
+          <p
+            v-if="record.description"
+            class="mt-1.5 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]"
+          >
+            {{ record.description }}
+          </p>
+
           <div class="mt-2.5 flex items-center gap-2">
             <span
               class="rounded-full px-2 py-[2px] text-[11px] font-medium"

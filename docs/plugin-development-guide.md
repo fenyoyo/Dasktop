@@ -1,4 +1,4 @@
-﻿# Dasktop 插件开发指南
+# Dasktop 插件开发指南
 
 > 目标读者：想在 Dasktop 里编写、安装或调试插件的开发者。
 > 本文档聚焦**第三方网页插件包**：一个目录 + 一份 `plugin.json` + 若干网页文件。
@@ -82,6 +82,7 @@ my-plugin/
 | `id` | `string` | 是 | 插件唯一标识，**必须与插件包目录名一致** |
 | `name` | `string` | 是 | 展示名称，可包含中文 |
 | `version` | `string` | 是 | 插件版本号，仅展示 |
+| `description` | `string` | 否 | 一句话功能描述，显示在「设置 → 插件」的插件列表里 |
 | `entry` | `string` | 是 | 入口页面相对路径，必须指向包内真实存在的 HTML 文件 |
 | `icon` | `string` | 否 | 插件图标相对路径，显示在「设置 → 插件」的插件列表里（见下文说明） |
 | `permissions` | `string[]` | 是 | 声明需要的能力权限（见第五节） |
@@ -95,6 +96,7 @@ my-plugin/
   "id": "translator",
   "name": "翻译助手",
   "version": "0.1.0",
+  "description": "调用在线翻译接口翻译文本，译文一键写入剪贴板。",
   "entry": "index.html",
   "icon": "icon.svg",
   "permissions": ["clipboard:read", "clipboard:write", "net:request"],
