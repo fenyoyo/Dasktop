@@ -12,6 +12,7 @@ import WindowPanel from "./panels/WindowPanel.vue";
 import WorkspacePanel from "./panels/WorkspacePanel.vue";
 import { useSettingsActions } from "./composables/useSettingsActions";
 import { useSettingsBoxes } from "./composables/useSettingsBoxes";
+import { useSettingsHotkey } from "./composables/useSettingsHotkey";
 import { useSettingsPlugins } from "./composables/useSettingsPlugins";
 import { useSettingsStartup } from "./composables/useSettingsStartup";
 import { useSettingsWindow } from "./composables/useSettingsWindow";
@@ -26,10 +27,16 @@ import {
 const desktopStore = useDesktopStore();
 const activeSection = ref<SettingsSection>("boxes");
 const settingsScrollArea = ref<HTMLElement | null>(null);
-const activeTitle = computed(() => resolveSettingsSectionTitle(activeSection.value));
+const activeTitle = computed(() =>
+  resolveSettingsSectionTitle(activeSection.value),
+);
 const settingsActions = useSettingsActions(desktopStore);
 const settingsBoxes = useSettingsBoxes(desktopStore);
-const settingsWindow = useSettingsWindow(desktopStore, settingsActions.syncAutostartEnabled);
+const settingsHotkey = useSettingsHotkey();
+const settingsWindow = useSettingsWindow(
+  desktopStore,
+  settingsActions.syncAutostartEnabled,
+);
 const workspaceStartup = useWorkspaceStartup();
 const settingsPlugins = useSettingsPlugins();
 const settingsStartup = useSettingsStartup(
@@ -50,16 +57,21 @@ const settingsStartup = useSettingsStartup(
  * 工作区启动编排必须早于 Box 恢复：它以最快的速度判断本次是否由
  * 工作区快捷方式启动，从而决定设置窗在 Box 恢复后是否收起。
  *
+ * 置顶快捷键配置在窗口面板可见前就要读出来，且不 await：它只是一次读库，失败也只会
+ * 让窗口面板那一行显示「未配置」，没必要拦在启动链路上。
+ *
  * 插件加载放在最后且不 await：插件是第三方代码，激活耗时不可控，
  * 更不能因为某个插件卡住就让 Box 恢复与设置窗显示一起等下去。
  */
 onMounted(async () => {
   await settingsWindow.bindFocusSync();
-  const startupWorkspaceId = await workspaceStartup.initializeWorkspaceStartup();
+  const startupWorkspaceId =
+    await workspaceStartup.initializeWorkspaceStartup();
   if (startupWorkspaceId) {
     activeSection.value = "workspace";
   }
   await settingsStartup.initializeSettingsStartup();
+  void settingsHotkey.loadForegroundPinHotkey();
   void settingsPlugins.initializePlugins();
 });
 
@@ -94,15 +106,21 @@ function changeActiveSection(section: SettingsSection): void {
 </script>
 
 <template>
-  <main class="settings-window h-screen w-screen overflow-hidden bg-transparent text-[#17181c] dark:text-[#f4f4f5]">
-    <section class="flex h-full w-full overflow-hidden bg-[#f7f7f9] shadow-[0_16px_36px_rgba(20,24,32,0.16)] ring-1 ring-inset ring-[#d7dae2] dark:bg-[#15161b] dark:shadow-[0_16px_36px_rgba(0,0,0,0.34)] dark:ring-[#2b2e36]">
+  <main
+    class="settings-window h-screen w-screen overflow-hidden bg-transparent text-[#17181c] dark:text-[#f4f4f5]"
+  >
+    <section
+      class="flex h-full w-full overflow-hidden bg-[#f7f7f9] shadow-[0_16px_36px_rgba(20,24,32,0.16)] ring-1 ring-inset ring-[#d7dae2] dark:bg-[#15161b] dark:shadow-[0_16px_36px_rgba(0,0,0,0.34)] dark:ring-[#2b2e36]"
+    >
       <SettingsSidebar
         :active-section="activeSection"
         :sections="SETTINGS_SECTIONS"
         @section-change="changeActiveSection"
       />
 
-      <section class="flex min-w-0 flex-1 flex-col bg-[#fbfbfd] dark:bg-[#101116]">
+      <section
+        class="flex min-w-0 flex-1 flex-col bg-[#fbfbfd] dark:bg-[#101116]"
+      >
         <SettingsHeader
           :title="activeTitle"
           @close="settingsWindow.closeSettings"
@@ -111,7 +129,10 @@ function changeActiveSection(section: SettingsSection): void {
           @toggle-maximize="settingsWindow.toggleSettingsMaximize"
         />
 
-        <div ref="settingsScrollArea" class="dasktop-scrollarea min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        <div
+          ref="settingsScrollArea"
+          class="dasktop-scrollarea min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+        >
           <div
             v-if="settingsStartup.startupError.value"
             class="mx-8 mt-6 rounded-[12px] border border-[#f0c7c7] bg-[#fff6f6] px-4 py-3 text-[13px] text-[#9f1d1d] dark:border-[#5b2a2d] dark:bg-[#281619] dark:text-[#ffb4b4]"
@@ -128,17 +149,32 @@ function changeActiveSection(section: SettingsSection): void {
 
           <div class="settings-panel-stack min-h-full">
             <Transition name="settings-panel">
-              <div :key="activeSection" class="settings-panel-transition min-h-full">
+              <div
+                :key="activeSection"
+                class="settings-panel-transition min-h-full"
+              >
                 <BoxesPanel
                   v-if="activeSection === 'boxes'"
                   :boxes="desktopStore.boxes"
-                  :collection-root-path="desktopStore.settings.collectionRootPath"
-                  :migratable-box-count="settingsActions.migratableBoxCount.value"
-                  :migration-busy="settingsActions.isMigratingCollectionRoot.value"
+                  :collection-root-path="
+                    desktopStore.settings.collectionRootPath
+                  "
+                  :migratable-box-count="
+                    settingsActions.migratableBoxCount.value
+                  "
+                  :migration-busy="
+                    settingsActions.isMigratingCollectionRoot.value
+                  "
                   :panel-width="SETTINGS_PANEL_WIDTH.default"
-                  @collection-root-choose="settingsActions.chooseCollectionRootFromSettings"
-                  @collection-root-migrate="settingsActions.migrateCollectionRootFromSettings"
-                  @collection-root-open="settingsActions.openCollectionRootFromSettings"
+                  @collection-root-choose="
+                    settingsActions.chooseCollectionRootFromSettings
+                  "
+                  @collection-root-migrate="
+                    settingsActions.migrateCollectionRootFromSettings
+                  "
+                  @collection-root-open="
+                    settingsActions.openCollectionRootFromSettings
+                  "
                   @create-box="settingsBoxes.createAndOpenBox"
                   @delete-box="settingsBoxes.deleteBoxFromSettings"
                   @open-box="settingsBoxes.openBoxWindow"
@@ -156,20 +192,39 @@ function changeActiveSection(section: SettingsSection): void {
                   v-else-if="activeSection === 'file'"
                   :panel-width="SETTINGS_PANEL_WIDTH.default"
                   :settings="desktopStore.settings"
-                  @box-boolean-setting-change="desktopStore.updateBooleanSetting"
-                  @box-conflict-policy-change="desktopStore.updateBoxConflictPolicy"
+                  @box-boolean-setting-change="
+                    desktopStore.updateBooleanSetting
+                  "
+                  @box-conflict-policy-change="
+                    desktopStore.updateBoxConflictPolicy
+                  "
                   @box-delete-policy-change="desktopStore.updateBoxDeletePolicy"
-                  @box-drag-out-action-change="desktopStore.updateBoxDragOutAction"
+                  @box-drag-out-action-change="
+                    desktopStore.updateBoxDragOutAction
+                  "
                   @box-drop-action-change="desktopStore.updateBoxDropAction"
                   @name-display-mode-change="desktopStore.updateNameDisplayMode"
                 />
                 <WindowPanel
                   v-else-if="activeSection === 'window'"
                   :autostart-enabled="settingsActions.autostartEnabled.value"
+                  :foreground-pin-hotkey="
+                    settingsHotkey.foregroundPinHotkey.value
+                  "
+                  :foreground-pin-hotkey-error="
+                    settingsHotkey.errorMessage.value
+                  "
                   :panel-width="SETTINGS_PANEL_WIDTH.default"
                   :settings="desktopStore.settings"
-                  @autostart-enabled-change="settingsActions.updateAutostartEnabled"
-                  @box-boolean-setting-change="desktopStore.updateBooleanSetting"
+                  @autostart-enabled-change="
+                    settingsActions.updateAutostartEnabled
+                  "
+                  @box-boolean-setting-change="
+                    desktopStore.updateBooleanSetting
+                  "
+                  @foreground-pin-hotkey-save="
+                    settingsHotkey.saveForegroundPinHotkey
+                  "
                   @snap-threshold-change="desktopStore.updateSnapThreshold"
                   @snap-to-edges-change="desktopStore.updateSnapToEdges"
                 />

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref } from "vue";
+import { computed, ref } from "vue";
 import {
   ArrowUpRight,
   Check,
@@ -24,6 +24,7 @@ import type { AppSettings } from "@/entities/appSettings/types";
 import SettingGroup from "../components/SettingGroup.vue";
 import SettingRow from "../components/SettingRow.vue";
 import SettingSection from "../components/SettingSection.vue";
+import { useHotkeyCapture } from "../composables/useHotkeyCapture";
 
 /**
  * 插件面板按「目录 → 窗口尺寸 → 插件列表 → 通知」四段组织。
@@ -218,141 +219,37 @@ function hotkeyKey(hotkey: PluginHotkeyRegistration): string {
  */
 let editingHotkey: PluginHotkeyRegistration | null = null;
 
-/** 进入编辑态时挂到 window 上的捕获监听，离开编辑态移除；`onUnmounted` 兜底避免泄漏。 */
-let removeCaptureListener: (() => void) | null = null;
-
-function stopCapturing(): void {
-  removeCaptureListener?.();
-  removeCaptureListener = null;
-}
+/**
+ * 组合键捕获由公共 composable 提供，这里只接三个回调：捕获写草稿、回车提交、Esc 取消。
+ *
+ * 捕获实现刻意抽出去而不是连组件一起抽：它与「哪一行处于编辑态」的展示逻辑无关，
+ * 而展示部分绑定了 `v-for` 的行级编辑态，抽组件的回归面大于收益。
+ */
+const hotkeyCapture = useHotkeyCapture({
+  onCancel: () => cancelHotkeyEditing(),
+  onCapture: (accelerator) => {
+    draftAccelerator.value = accelerator;
+  },
+  onCommit: () => {
+    if (editingHotkey) {
+      commitHotkey(editingHotkey);
+    }
+  },
+});
 
 function startEditingHotkey(hotkey: PluginHotkeyRegistration): void {
-  // 从一行切到另一行改键时，先把前一个编辑态的 window 监听撤掉，避免按键同时写两份草稿。
-  stopCapturing();
   editingHotkeyKey.value = hotkeyKey(hotkey);
   editingHotkey = hotkey;
   draftAccelerator.value = hotkey.accelerator;
 
-  // 热键是「按下即捕获」，不能依赖输入框获得焦点：它位于 v-for 内、又是只读框，
-  // 某些平台收不到 keydown，聚焦还会因为 v-for 的 ref 被收集成数组而落空，落空就存进空串、
-  // 状态永远停在「未配置快捷键」。直接挂 window 级捕获（捕获阶段），按键无论焦点在哪都被抓到。
-  const handler = (event: KeyboardEvent): void => captureHotkey(event);
-  window.addEventListener("keydown", handler, true);
-  removeCaptureListener = (): void =>
-    window.removeEventListener("keydown", handler, true);
-
-  // 仍把焦点给输入框作为回退：极少数平台 window 级捕获拿不到物理键位时，
-  // 聚焦后的输入框 keydown 还能兜底抓一次。用 id 定位，避开 v-for 的 ref 数组陷阱。
-  nextTick(() => document.getElementById("plugin-hotkey-input")?.focus());
-}
-
-/**
- * 捕获热键时忽略的「裸修饰键」：它们单独按下不组成完整组合键，等主键落下再一起记录。
- */
-const HOTKEY_MODIFIER_KEYS = new Set([
-  "Control",
-  "Alt",
-  "Shift",
-  "Meta",
-  "Win",
-  "OS",
-]);
-
-/**
- * 从按键事件里取出主键名。
- *
- * 优先用 `event.code`（物理键位，如 `KeyT` / `Digit1` / `F5`），而不是 `event.key`：
- * 按住 `Alt` 时 `event.key` 经常被输入法、死键或 AltGr 吞掉 / 改写成奇怪的值，导致
- * 只捕获到修饰键、主键丢失，结果存进空串、状态停在「未配置快捷键」。物理键位不受这些影响。
- */
-function keyFromEvent(event: KeyboardEvent): string | null {
-  const code = event.code;
-  if (/^Key[A-Z]$/.test(code)) {
-    return code.slice(3); // KeyT -> T
-  }
-  if (/^Digit[0-9]$/.test(code)) {
-    return code.slice(5); // Digit1 -> 1
-  }
-  if (/^Numpad[0-9]$/.test(code)) {
-    return code.slice(6); // Numpad1 -> 1
-  }
-  if (/^F([1-9]|1[0-2])$/.test(code)) {
-    return code; // F1..F12 原样保留
-  }
-
-  const named: Record<string, string> = {
-    Space: "Space",
-    ArrowUp: "ArrowUp",
-    ArrowDown: "ArrowDown",
-    ArrowLeft: "ArrowLeft",
-    ArrowRight: "ArrowRight",
-    Backspace: "Backspace",
-    Delete: "Delete",
-    Home: "Home",
-    End: "End",
-    PageUp: "PageUp",
-    PageDown: "PageDown",
-  };
-  if (named[code]) {
-    return named[code];
-  }
-
-  // 其它单字符键（符号等）退回 event.key，统一大写保证稳定。
-  if (event.key && event.key.length === 1) {
-    return event.key.toUpperCase();
-  }
-  return null;
-}
-
-/**
- * 编辑态开启时挂在 window 上捕获用户按下的组合键，构造形如 `Alt+T` / `Ctrl+Alt+T` 的快捷键字符串。
- *
- * 必须是「按下即捕获」而不是普通文本输入：快捷键是组合键，用户在普通文本框里敲不出
- * `Alt+T`（按住 Alt 时浏览器不会往输入框写字），结果就是保存了一个空串、状态始终停在
- * 「未配置快捷键」。这里在 keydown 里直接读修饰键与主键、拼成字符串，并 `preventDefault`
- * 挡掉浏览器/系统对组合键的默认响应（如 Alt 拉起菜单），否则捕获到的不会是用户想绑的键。
- *
- * 回车提交、Esc 取消：捕获在 window 层完成，因此不依赖输入框获得焦点。
- */
-function captureHotkey(event: KeyboardEvent): void {
-  // 回车提交、Esc 取消；Tab 不当成主键，直接放过去避免把焦点切换吞掉。
-  if (event.key === "Enter") {
-    if (editingHotkey) {
-      commitHotkey(editingHotkey);
-    }
-    return;
-  }
-  if (event.key === "Escape" || event.key === "Tab") {
-    cancelHotkeyEditing();
-    return;
-  }
-
-  // 单独按下修饰键只是组合键的前奏，此刻还不完整，不能记录。
-  if (HOTKEY_MODIFIER_KEYS.has(event.key)) {
-    return;
-  }
-
-  event.preventDefault();
-  event.stopPropagation();
-
-  const tokens: string[] = [];
-  if (event.ctrlKey) tokens.push("Ctrl");
-  if (event.altKey) tokens.push("Alt");
-  if (event.shiftKey) tokens.push("Shift");
-  if (event.metaKey) tokens.push("Meta");
-
-  const key = keyFromEvent(event);
-  if (key) {
-    tokens.push(key);
-  }
-
-  draftAccelerator.value = tokens.join("+");
+  // 回退聚焦目标用固定 id：输入框在 v-for 内，用 ref 会被收集成数组而定位不到具体那一个。
+  hotkeyCapture.startCapture("plugin-hotkey-input");
 }
 
 function cancelHotkeyEditing(): void {
   editingHotkeyKey.value = null;
   editingHotkey = null;
-  stopCapturing();
+  hotkeyCapture.stopCapture();
 }
 
 /**
@@ -366,7 +263,7 @@ function commitHotkey(hotkey: PluginHotkeyRegistration): void {
   emit("pluginHotkeySave", hotkey.pluginId, value, hotkey.enabled);
   editingHotkeyKey.value = null;
   editingHotkey = null;
-  stopCapturing();
+  hotkeyCapture.stopCapture();
 }
 
 /**
@@ -393,9 +290,6 @@ function toggleHotkeyEnabled(hotkey: PluginHotkeyRegistration): void {
 function clearHotkey(hotkey: PluginHotkeyRegistration): void {
   emit("pluginHotkeySave", hotkey.pluginId, "", hotkey.enabled);
 }
-
-// 组件卸载时撤掉可能残留的捕获监听，避免泄漏到其它面板。
-onUnmounted(stopCapturing);
 </script>
 
 <template>
@@ -631,7 +525,7 @@ onUnmounted(stopCapturing);
               placeholder="按下组合键…"
               readonly
               type="text"
-              @keydown="captureHotkey"
+              @keydown="hotkeyCapture.handleKeydown"
             />
             <span
               class="text-[11px] leading-5 text-[#9aa0ac] dark:text-[#7c828d]"

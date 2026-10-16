@@ -19,6 +19,35 @@ export type BoxDropAction = "copy" | "move" | "map";
 export type BoxConflictPolicy = "rename" | "skip" | "replace";
 
 /**
+ * 「把当前前台窗口置顶 / 取消置顶」全局快捷键的可用状态。
+ *
+ * 与插件热键的状态刻意分开定义：应用级只此一条热键，没有同类横向冲突，因此没有
+ * `conflict`；状态名与 Rust 侧 `ForegroundPinHotkeyStatus` 的 camelCase 序列化一一对应。
+ */
+export type ForegroundPinHotkeyStatus =
+  | "ok"
+  | "systemReserved"
+  | "invalid"
+  | "disabled";
+
+/**
+ * 上述全局快捷键的生效配置与状态，由宿主命令下发。
+ *
+ * 这两个键刻意不进 `AppSettings`：它们的合法性由 Rust 侧独占校验，且必须与启用状态
+ * 一起落库、一起重挂，前端只经命令读写，不直连设置表。
+ */
+export interface ForegroundPinHotkeyRegistration {
+  /** 生效组合键；未配置时为空串。 */
+  accelerator: string;
+  /** 用户是否启用了这条快捷键。 */
+  enabled: boolean;
+  /** 当前能否真正注册上。 */
+  status: ForegroundPinHotkeyStatus;
+  /** 状态不是 `ok` 时的说明，面板红字展示。 */
+  message: string | null;
+}
+
+/**
  * 应用设置只保存文件夹型 Box 真实使用的偏好，旧版参数不再兼容
  */
 export interface AppSettings {
