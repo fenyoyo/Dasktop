@@ -83,3 +83,23 @@ commands.allow = [
   "resolve_startup_workspace_id",
   "restore_workspace_layout",
 ]
+
+# 屏幕框选层的专用权限。
+#
+# 覆盖窗口（capture_overlay）是宿主自己的界面——一层盖在鼠标所在显示器上的透明
+# 全屏层，它需要的命令与宿主面板 / Box 窗口完全不同：只有「提交选区」与「取消框选」
+# 两条。刻意单列一份而不是并进 allow-host-commands：后者会顺带把桌面、Box、工作区的
+# 全部命令一并授予覆盖窗口，而它只是一个临时的框选层，不该掌握这些能力。
+[[permission]]
+identifier = "allow-capture-overlay-commands"
+description = """
+允许屏幕框选层提交选区与取消框选。
+
+只授予 capture_overlay 窗口。这两条命令操作的是宿主的框选会话状态，既不读写文件、
+也不发起网络请求，因此覆盖窗口除此之外不需要任何权限。它与插件窗口（plugin_*）的
+授权范围同样互不相交，`pnpm verify:acl` 会守住这一点。
+"""
+commands.allow = [
+  "cancel_plugin_screen_capture",
+  "finish_plugin_screen_capture",
+]

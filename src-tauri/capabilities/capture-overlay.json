@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture-overlay",
+  "description": "Capability for the screen-capture overlay window only. The overlay is host-owned UI (a transparent, always-on-top layer covering the monitor under the cursor, where the user drags a selection rectangle), so it needs neither the plugin capability commands nor the desktop / box / workspace host commands: just the two commands that submit or cancel the selection. Keeping it a separate capability means that adding a future command to allow-host-commands can never silently hand it to this window.",
+  "windows": ["capture_overlay"],
+  "webviews": ["capture_overlay"],
+  "permissions": ["allow-capture-overlay-commands"]
+}

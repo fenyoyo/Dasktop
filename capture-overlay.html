@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>屏幕框选</title>
+  </head>
+
+  <body>
+    <!--
+      屏幕框选层：窗口本身透明且被宿主精确铺满目标显示器，用户看到的下层就是真实桌面，
+      因此这里没有任何背景图——只是一层「挖掉选区的暗色遮罩」加一条选区边框。
+    -->
+    <div id="selection" class="selection" hidden>
+      <span id="size-tag" class="size-tag"></span>
+    </div>
+    <div id="hint" class="hint">拖动鼠标框选区域 · Esc 或右键取消</div>
+    <script type="module" src="/src/capture-overlay/main.ts"></script>
+  </body>
+</html>

@@ -3,8 +3,10 @@
 pub(crate) mod common;
 pub(crate) mod desktop_glue;
 pub(crate) mod folder_dialog;
+pub(crate) mod image_clipboard;
 pub(crate) mod mouse;
 pub(crate) mod native_drop;
+pub(crate) mod save_dialog;
 pub(crate) mod shell_clipboard;
 pub(crate) mod shell_context;
 pub(crate) mod shell_desktop_icon;

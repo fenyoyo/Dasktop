@@ -23,9 +23,11 @@
     "clipboard.write": "clipboard:write",
     "fs.read": "fs:read",
     "fs.write": "fs:write",
+    "file.save": "fs:save",
     "log.write": "log:write",
     "net.request": "net:request",
     "notify.send": "ui:notify",
+    "screen.capture": "screen:capture",
   };
 
   var config = window.__DASKTOP_BRIDGE__;
@@ -105,6 +107,15 @@
         pluginId: config.id,
       });
     };
+
+    // 图片读取与文本读取共用 clipboard:read 权限：宿主读的是同一份剪贴板资源，
+    // 只是内容类型不同。返回的是可直接交给 `<img>` 的完整 data URL（宿主按实际来源
+    // 决定 MIME），剪贴板里没有图片时返回 null，由插件决定提示文案。
+    clipboard.readImage = function () {
+      return invoke("read_plugin_clipboard_image", {
+        pluginId: config.id,
+      });
+    };
   }
 
   if (has(CAPABILITY_TABLE["clipboard.write"])) {
@@ -145,6 +156,26 @@
     api.fs = Object.freeze(fs);
   }
 
+  /*
+   * 导出文件：宿主会弹出系统保存对话框，落盘位置由用户当场选定，所以这不是「任意路径
+   * 写权限」。调用返回保存后的完整路径，用户取消则返回 null；插件应当把路径显示出来，
+   * 只说一句「已保存」用户并不知道文件去了哪。
+   *
+   * contents 传 base64 载荷（不含 data URL 前缀）：图片这类二进制跨 IPC 只能走文本，
+   * 文本文件也套用同一种形态，插件端不必为内容类型分两条路径。
+   */
+  if (has(CAPABILITY_TABLE["file.save"])) {
+    api.file = Object.freeze({
+      save: function (fileName, contents) {
+        return invoke("save_plugin_file", {
+          pluginId: config.id,
+          fileName: text(fileName),
+          contents: text(contents),
+        });
+      },
+    });
+  }
+
   if (has(CAPABILITY_TABLE["log.write"])) {
     api.log = Object.freeze({
       write: function (level, message) {
@@ -175,6 +206,19 @@
           pluginId: config.id,
           title: text(title),
           message: text(message),
+        });
+      },
+    });
+  }
+
+  // 屏幕截图：宿主会弹出全屏框选层让用户亲手拖出区域，因此这个调用会一直悬着，
+  // 直到用户松开鼠标（resolve 为 PNG base64）或取消（resolve 为 null）。插件侧要按
+  // 「可能等待较久」来设计，不要在调用前后锁死界面。
+  if (has(CAPABILITY_TABLE["screen.capture"])) {
+    api.screen = Object.freeze({
+      capture: function () {
+        return invoke("capture_plugin_screen_region", {
+          pluginId: config.id,
         });
       },
     });

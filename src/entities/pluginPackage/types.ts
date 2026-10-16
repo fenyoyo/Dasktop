@@ -193,9 +193,11 @@ export const PLUGIN_PERMISSIONS = [
   "clipboard:read",
   "clipboard:write",
   "fs:read",
+  "fs:save",
   "fs:write",
   "log:write",
   "net:request",
+  "screen:capture",
   "ui:notify",
 ] as const;
 

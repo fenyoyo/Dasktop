@@ -4,14 +4,16 @@
 # 一起拿到桌面、Box、工作区那些命令——只要有人往那份清单里加一条命令，就等于同时给
 # 插件开了同一条能力。分开之后，两份权限的交集恒为空集，`pnpm verify:acl` 会守住这一点。
 #
-# 这里列的七条都是「宿主代插件做的事」，插件无法自己完成：
+# 这里列的十条都是「宿主代插件做的事」，插件无法自己完成：
 # - 读写文件被限制在插件自己的包目录内（浏览器侧没有文件系统）；
+# - 导出文件要弹系统保存对话框，落盘位置由用户当场指定，插件拿不到「任意路径写入」；
 # - 日志按插件分文件落盘；
 # - 网络请求由宿主进程发出，不受同源策略约束；
 # - 通知交给宿主界面统一展示；
-# - 剪贴板读写由宿主进程操作，不受浏览器剪贴板 API 的权限弹窗限制。
+# - 剪贴板读写由宿主进程操作，不受浏览器剪贴板 API 的权限弹窗限制（读取同时覆盖文本与图片）；
+# - 屏幕截图由宿主弹出框选层并读取屏幕像素，插件自身拿不到屏幕内容。
 #
-# 注意本文件只决定「插件窗口能不能调这七条命令」，**不决定某个插件能不能调**。
+# 注意本文件只决定「插件窗口能不能调这十条命令」，**不决定某个插件能不能调**。
 # capability 是窗口级的，而权限是插件级声明的（plugin.json 的 permissions），两者对不上，
 # 所以「这个插件有没有声明 fs:read」由服务层每条命令自己读清单判定，见
 # `services/plugin/mod.rs` 的 `require_permission`。
@@ -19,7 +21,7 @@
 [[permission]]
 identifier = "allow-plugin-capabilities"
 description = """
-允许插件窗口调用宿主开放的七条能力命令。
+允许插件窗口调用宿主开放的十条能力命令。
 
 只授予 plugin_* 窗口。窗口标签同时是插件身份的锚点：能力命令从调用方窗口的标签反推
 插件 id，插件自己填的 plugin_id 参数不被采纳，因此插件无法以别人的身份调能力。
@@ -29,10 +31,12 @@ description = """
 插件页面里的能力桥（bridge.js）、以及 Rust 侧 `domain/plugin/contract.rs` 的权限常量；
 `pnpm verify:acl` 与 `pnpm verify:plugins` 会各自守住第一、二处与桥的一致性。
 """
-# 文件（限插件自己的包目录内）
+# 文件（包内受限读写 + 向用户选定路径导出）
 commands.allow = [
   "read_plugin_package_file",
   "write_plugin_package_file",
+  # 导出：弹系统保存对话框后写入用户选定的路径
+  "save_plugin_file",
   # 日志
   "write_plugin_log",
   # 网络
@@ -41,5 +45,8 @@ commands.allow = [
   "notify_from_plugin",
   # 剪贴板
   "read_plugin_clipboard_text",
+  "read_plugin_clipboard_image",
   "write_plugin_clipboard_text",
+  # 屏幕截图：框选层由宿主弹出，插件只负责发起请求并拿回 PNG 数据
+  "capture_plugin_screen_region",
 ]

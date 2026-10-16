@@ -9,7 +9,7 @@
 //!
 //! # 能力判定的两个前提
 //!
-//! 五条能力命令的入口都做两件事，缺一不可：
+//! 十条能力命令的入口都做两件事，缺一不可：
 //!
 //! 1. **身份取自调用方窗口标签**，而不是命令参数里的 `plugin_id`（见
 //!    [`resolve_caller_plugin_id`]）。参数是插件自己填的，采纳它等于让插件 A 声明成 B。
@@ -25,28 +25,38 @@
 mod bridge;
 mod hotkey;
 mod protocol;
+mod screen_capture;
 mod window_preference;
 
 pub use hotkey::{
     list_plugin_hotkeys, register_all_plugin_hotkeys, set_plugin_hotkey, PluginHotkeyRegistration,
 };
 pub use protocol::handle_plugin_asset_request;
+pub use screen_capture::{
+    cancel_screen_capture, capture_screen_region, finish_screen_capture, ScreenCaptureSelection,
+    ScreenCaptureSession,
+};
 
 use std::path::{Path, PathBuf};
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::plugin::{
     PluginHttpRequest, PluginHttpResponse, PluginManifest, PluginScanResult,
-    PLUGIN_CLIPBOARD_MAX_BYTES, PLUGIN_LOG_DIR_NAME, PLUGIN_NOTIFICATION_EVENT, PLUGIN_PERMISSIONS,
-    PLUGIN_PERMISSION_CLIPBOARD_READ, PLUGIN_PERMISSION_CLIPBOARD_WRITE, PLUGIN_PERMISSION_FS_READ,
+    PLUGIN_CLIPBOARD_IMAGE_MAX_BYTES, PLUGIN_CLIPBOARD_MAX_BYTES, PLUGIN_LOG_DIR_NAME,
+    PLUGIN_NOTIFICATION_EVENT, PLUGIN_PERMISSIONS, PLUGIN_PERMISSION_CLIPBOARD_READ,
+    PLUGIN_PERMISSION_CLIPBOARD_WRITE, PLUGIN_PERMISSION_FS_READ, PLUGIN_PERMISSION_FS_SAVE,
     PLUGIN_PERMISSION_FS_WRITE, PLUGIN_PERMISSION_LOG_WRITE, PLUGIN_PERMISSION_NET_REQUEST,
     PLUGIN_PERMISSION_UI_NOTIFY, PLUGIN_PROTOCOL_SCHEME, PLUGIN_ROOT_DIR_NAME,
-    PLUGIN_WINDOW_LABEL_PREFIX, PLUGIN_WINDOW_MIN_SIZE,
+    PLUGIN_SAVE_FILE_MAX_BYTES, PLUGIN_WINDOW_LABEL_PREFIX, PLUGIN_WINDOW_MIN_SIZE,
 };
 use crate::infrastructure::filesystem::{plugin_log, plugin_package};
 use crate::infrastructure::http;
+use crate::infrastructure::windows::image_clipboard;
+use crate::infrastructure::windows::save_dialog::{self, SaveDialogOwner};
 use crate::infrastructure::windows::shell_file;
 use crate::infrastructure::windows::text_clipboard;
 
@@ -253,6 +263,62 @@ pub fn write_plugin_file(
     plugin_package::write_package_file(&package_dir, relative_path, contents)
 }
 
+/// 把插件提交的内容保存到用户选定的文件，对应 `fs:save` 能力。
+///
+/// 与 `fs:write` 的区别不在「写文件」而在**路径由谁定**：`fs:write` 的路径是宿主在插件包
+/// 目录下拼出来的，插件越不了界；这里则先弹系统保存对话框，落盘位置由用户当场指定，
+/// 因此插件只可能写到「用户刚刚亲手点过保存的那个路径」。
+///
+/// 成功时返回落盘后的完整路径，插件据此告诉用户文件到底存到哪去了——「已保存」这种
+/// 不带位置的提示在桌面上等于没说。用户取消对话框时返回 `None`，这不是错误。
+///
+/// 内容以 base64 传入：PNG 这类二进制跨 IPC 只能走文本，纯文本文件同样套用这一种载荷，
+/// 避免为了省一层编码而让契约出现两条分支。
+pub fn save_file_with_dialog(
+    app: &AppHandle,
+    plugin_id: &str,
+    owner: SaveDialogOwner,
+    file_name: &str,
+    contents_base64: &str,
+) -> Result<Option<String>, String> {
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_FS_SAVE)?;
+
+    let contents = STANDARD
+        .decode(contents_base64)
+        .map_err(|error| format!("解析插件提交的文件内容失败：{error}"))?;
+
+    if contents.len() > PLUGIN_SAVE_FILE_MAX_BYTES {
+        return Err(format!(
+            "导出文件超出上限（{} 字节）",
+            PLUGIN_SAVE_FILE_MAX_BYTES
+        ));
+    }
+
+    // 建议文件名来自插件，是边界外的输入：先剥成纯文件名，避免插件用 `..\..` 之类的
+    // 名字去误导对话框的预填（最终落盘位置仍由用户点击后 Shell 返回的结果决定）。
+    let suggested_name = Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("下载文件");
+
+    let Some(path) = save_dialog::choose_save_path(owner, suggested_name)? else {
+        append_log(app, plugin_id, "file", "导出文件：用户取消了保存")?;
+        return Ok(None);
+    };
+
+    std::fs::write(&path, &contents).map_err(|error| format!("写入文件失败：{error}"))?;
+
+    append_log(
+        app,
+        plugin_id,
+        "file",
+        &format!("导出文件到 {path}，{} 字节", contents.len()),
+    )?;
+
+    Ok(Some(path))
+}
+
 /// 追加插件运行日志，对应 `log:write` 能力。
 pub fn write_plugin_log(
     app: &AppHandle,
@@ -312,6 +378,53 @@ pub fn read_clipboard_text(app: &AppHandle, plugin_id: &str) -> Result<String, S
     )?;
 
     Ok(truncated)
+}
+
+/// 读取系统剪贴板中的图片，对应 `clipboard:read` 能力。
+///
+/// 返回一段可直接交给 `<img>` 的 data URL。宿主按实际来源决定 MIME——剪贴板里是位图
+/// （截图、网页「复制图片」）时编码成 PNG，是复制的图片文件时按魔数原样透传——因此插件端
+/// 不需要假设图片类型，也就不会再出现「文件其实不是 PNG、前端却按 PNG 解析」的问题。
+///
+/// 剪贴板里没有图片时返回 `None`——「剪贴板里放的是文本」是插件的正常分支，不该报成
+/// 错误，插件据此提示用户去复制一张图片，而不是显示读失败。
+///
+/// 与文本读取共用 `clipboard:read` 权限：对插件而言这是同一种能力，文本还是图片是
+/// 运行时的内容差异，没有理由让插件多声明一条权限。
+///
+/// 日志只记来源与字节数，不记内容：剪贴板里的图片可能带着用户屏幕上的敏感信息。
+pub fn read_clipboard_image(app: &AppHandle, plugin_id: &str) -> Result<Option<String>, String> {
+    require_permission(app, plugin_id, PLUGIN_PERMISSION_CLIPBOARD_READ)?;
+
+    let Some(image) = image_clipboard::read_image(PLUGIN_CLIPBOARD_IMAGE_MAX_BYTES)? else {
+        append_log(
+            app,
+            plugin_id,
+            "clipboard",
+            "读取剪贴板图片：剪贴板中没有图片",
+        )?;
+        return Ok(None);
+    };
+
+    // 记下来源：读「用户刚复制的那个图片文件」是本能力里唯一会碰磁盘的路径，
+    // 留下文件路径才能在出问题时说清宿主到底读了哪个文件。
+    let source = image.file_path.as_deref().unwrap_or("剪贴板位图");
+    append_log(
+        app,
+        plugin_id,
+        "clipboard",
+        &format!(
+            "读取剪贴板图片（{}，来源：{source}），{} 字节",
+            image.mime,
+            image.bytes.len()
+        ),
+    )?;
+
+    Ok(Some(format!(
+        "data:{};base64,{}",
+        image.mime,
+        STANDARD.encode(&image.bytes)
+    )))
 }
 
 /// 写入系统剪贴板文本，对应 `clipboard:write` 能力。
@@ -423,7 +536,7 @@ pub fn sync_dev_plugin_packages(app: &AppHandle) -> Result<Vec<String>, String> 
 /// 确认插件清单声明了某项能力。
 ///
 /// 这条判定不能在别处替代：capability 是按**窗口**授权的，而清单权限是按**插件**声明
-/// 的。插件窗口那一份 capability 只能把五条能力命令整体授予「所有插件窗口」，所以
+/// 的。插件窗口那一份 capability 只能把六条能力命令整体授予「所有插件窗口」，所以
 /// 「具体这个插件有没有声明」只有读到它的清单才知道。
 ///
 /// 每次都重读清单而不是缓存：插件是磁盘上的目录，作者改完清单再点「重新加载」就该

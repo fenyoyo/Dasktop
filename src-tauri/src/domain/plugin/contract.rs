@@ -83,13 +83,25 @@ pub const PLUGIN_WINDOW_MAX_SIZE: (f64, f64) = (2560.0, 2560.0);
 
 /// 插件窗口标签前缀，完整标签形如 `plugin_<插件id>`。
 ///
-/// **这个标签是插件身份的锚点，不能只当命名约定看**。五条能力命令都从调用方窗口的
+/// **这个标签是插件身份的锚点，不能只当命名约定看**。六条能力命令都从调用方窗口的
 /// 标签反推插件 id，而不是采纳命令参数里那个 `plugin_id`——参数是插件自己填的，
 /// 采纳它等于让插件 A 能声明成 B 去读写 B 的包内文件。插件页面无法伪造自己的标签
 /// （改标签要 `core:window` 权限，插件窗口一条 Tauri 权限都没有）。
 ///
 /// 与前端 `entities/pluginPackage/window.ts` 的 `PLUGIN_WINDOW_LABEL_PREFIX` 必须一致。
 pub const PLUGIN_WINDOW_LABEL_PREFIX: &str = "plugin_";
+
+/// 屏幕截图框选覆盖窗口的标签。
+///
+/// 这个窗口是宿主自己的界面（覆盖在鼠标所在显示器上的透明全屏层），**不是插件窗口**，
+/// 因此它的命令授权走 `permissions/host-commands.toml` 的 `allow-capture-overlay-commands`
+/// 与 `capabilities/capture-overlay.json`，而不是插件能力那一套。
+///
+/// 前缀刻意**不带** [`PLUGIN_WINDOW_LABEL_PREFIX`]：`services::plugin::resolve_caller_plugin_id`
+/// 按前缀反推插件身份，而 ACL 校验脚本（`scripts/verify-acl.mjs`）也按前缀划分
+/// 「宿主窗口 / 插件窗口」两份授权范围。一旦它被写成 `plugin_` 开头，覆盖窗口会同时被
+/// 判定成插件窗口，插件就能借着这条路径拿到框选命令。
+pub const SCREEN_CAPTURE_OVERLAY_WINDOW_LABEL: &str = "capture_overlay";
 
 /* -------------------------------------------------------------------------- */
 /* 能力权限字符串                                                              */
@@ -108,6 +120,20 @@ pub const PLUGIN_PERMISSION_NET_REQUEST: &str = "net:request";
 pub const PLUGIN_PERMISSION_UI_NOTIFY: &str = "ui:notify";
 pub const PLUGIN_PERMISSION_CLIPBOARD_READ: &str = "clipboard:read";
 pub const PLUGIN_PERMISSION_CLIPBOARD_WRITE: &str = "clipboard:write";
+/// 截取屏幕指定区域并取回图片数据。
+///
+/// 与剪贴板同属「宿主代插件执行」的一类：浏览器侧的 WebView 拿不到屏幕像素，屏幕内容
+/// 只能由宿主的 GDI 通道读取。这条能力还额外会弹出全屏覆盖窗口让用户亲手框选，
+/// 也就是说它不只读写数据，还会接管用户界面，因此必须由插件在清单里显式声明——
+/// 否则一个未经声明的插件调用它就能凭空弹出全屏遮罩。
+pub const PLUGIN_PERMISSION_SCREEN_CAPTURE: &str = "screen:capture";
+/// 把插件生成的内容保存到用户选定的文件。
+///
+/// 与 `fs:write` 是两件事：`fs:write` 只能写插件自己的包目录（路径由宿主拼接，插件无权
+/// 越界），本条会弹出系统保存对话框，最终落盘位置由**用户**当场指定。也就是说插件拿到
+/// 的是「用户刚刚亲手授权的那一个路径」，而不是任意路径写权限——这一点必须在文案里说清，
+/// 否则用户会以为授权的是「插件可以随便写我磁盘」。
+pub const PLUGIN_PERMISSION_FS_SAVE: &str = "fs:save";
 
 /// 宿主认识的全部能力权限。
 ///
@@ -117,9 +143,11 @@ pub const PLUGIN_PERMISSIONS: &[&str] = &[
     PLUGIN_PERMISSION_CLIPBOARD_READ,
     PLUGIN_PERMISSION_CLIPBOARD_WRITE,
     PLUGIN_PERMISSION_FS_READ,
+    PLUGIN_PERMISSION_FS_SAVE,
     PLUGIN_PERMISSION_FS_WRITE,
     PLUGIN_PERMISSION_LOG_WRITE,
     PLUGIN_PERMISSION_NET_REQUEST,
+    PLUGIN_PERMISSION_SCREEN_CAPTURE,
     PLUGIN_PERMISSION_UI_NOTIFY,
 ];
 
@@ -139,3 +167,17 @@ pub const PLUGIN_HTTP_RESPONSE_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// 剪贴板文本需要整体通过 IPC 和 Win32 全局内存传递，不设上限的话
 /// 一次超大文本操作就能拖垮宿主进程。
 pub const PLUGIN_CLIPBOARD_MAX_BYTES: usize = 1 * 1024 * 1024;
+
+/// 插件读取剪贴板图片的体积上限，单位为字节（按 PNG 编码后的长度计）。
+///
+/// 明显高于文本上限是有意的：插件读剪贴板的典型用途就是「把刚截的图丢进来」，
+/// 一张 4K 截图编码成 PNG 本身就是数兆字节，套用文本那一档会把主场景直接卡死；
+/// 但也不能不设限——一张超高分辨率位图（多屏拼接、超大画布）编码后足以撑爆 IPC 与内存。
+pub const PLUGIN_CLIPBOARD_IMAGE_MAX_BYTES: usize = 12 * 1024 * 1024;
+
+/// 插件导出文件的体积上限，单位为字节（按插件提交的原始字节计）。
+///
+/// 内容要整体跨 IPC 传递、再按用户选定的路径落盘，不设上限的话一次超大导出就能把进程
+/// 内存打满；上限比剪贴板图片那一档再宽一点，是因为导出的是插件自己生成的文件，用户对
+/// 「我要把它存下来」是有明确预期的。
+pub const PLUGIN_SAVE_FILE_MAX_BYTES: usize = 16 * 1024 * 1024;

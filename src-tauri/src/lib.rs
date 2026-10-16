@@ -31,13 +31,14 @@ pub fn run() {
         // 全局快捷键插件：插件启动热键的「挂到系统」由注册层消费本插件完成，
         // 宿主只在 Rust 侧注册，不暴露任何前端命令，因此无需 capability 授权。
         .plugin(tauri_plugin_global_shortcut::Builder::default().build())
+        // 屏幕框选会话：同一时刻只允许一个框选层，等待端登记在这里，由覆盖窗口回填结果。
+        .manage(services::plugin::ScreenCaptureSession::default())
         // 插件页面资源走自定义协议：插件界面是作者自己写的网页，宿主把插件包目录
         // 映射成 `plugin` 协议供插件窗口加载。URL 前缀由 `services::plugin::asset_base_url`
         // 按平台给出（Windows 上是 `http://plugin.localhost`）。
-        .register_uri_scheme_protocol(
-            domain::plugin::PLUGIN_PROTOCOL_SCHEME,
-            |ctx, request| services::plugin::handle_plugin_asset_request(ctx.app_handle(), &request),
-        )
+        .register_uri_scheme_protocol(domain::plugin::PLUGIN_PROTOCOL_SCHEME, |ctx, request| {
+            services::plugin::handle_plugin_asset_request(ctx.app_handle(), &request)
+        })
         .setup(move |app| {
             app.manage(single_instance_guard);
             infrastructure::windows::single_instance::start_show_settings_listener(
@@ -66,8 +67,7 @@ pub fn run() {
             // 配置会经 set_plugin_hotkey 命令再次触发全量重注册。
             let hotkey_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) =
-                    services::plugin::register_all_plugin_hotkeys(&hotkey_app).await
+                if let Err(error) = services::plugin::register_all_plugin_hotkeys(&hotkey_app).await
                 {
                     eprintln!("[plugin] 启动注册插件热键失败：{error}");
                 }
@@ -101,6 +101,9 @@ pub fn run() {
             commands::desktop::write_desktop_items_to_clipboard,
             commands::native_drop::register_box_native_drop_target,
             commands::native_drop::unregister_box_native_drop_target,
+            commands::plugin::cancel_plugin_screen_capture,
+            commands::plugin::capture_plugin_screen_region,
+            commands::plugin::finish_plugin_screen_capture,
             commands::plugin::list_plugins,
             commands::plugin::notify_from_plugin,
             commands::plugin::open_plugin_root,
@@ -109,8 +112,10 @@ pub fn run() {
             commands::plugin::list_plugin_hotkeys,
             commands::plugin::set_plugin_hotkey,
             commands::plugin::sync_dev_plugin_packages,
+            commands::plugin::read_plugin_clipboard_image,
             commands::plugin::read_plugin_clipboard_text,
             commands::plugin::read_plugin_package_file,
+            commands::plugin::save_plugin_file,
             commands::plugin::write_plugin_clipboard_text,
             commands::plugin::write_plugin_log,
             commands::plugin::write_plugin_package_file,
