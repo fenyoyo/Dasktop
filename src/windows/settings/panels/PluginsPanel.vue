@@ -146,6 +146,26 @@ const STATUS_CLASSES: Record<PluginRuntimeRecord["status"], string> = {
 };
 
 /**
+ * 加载失败的图标地址集合。
+ *
+ * 图标经插件协议按需拉取，个别插件的图片可能在扫描之后才损坏或被删。以 URL 为键而不是
+ * 插件 id：作者修好文件并重新加载后，宿主会下发新地址（路径或缓存语义变化），旧的失败
+ * 记录不应继续遮蔽新图标。用不可变 Set 整体替换，保持与运行时快照相同的浅层响应式风格。
+ */
+const brokenIconUrls = ref<ReadonlySet<string>>(new Set());
+
+/**
+ * 单个图标加载失败时只隐藏这一张、回退占位拼图，不阻断该行的其它信息展示。
+ */
+function handleIconLoadError(iconUrl: string): void {
+  if (!iconUrl || brokenIconUrls.value.has(iconUrl)) {
+    return;
+  }
+
+  brokenIconUrls.value = new Set(brokenIconUrls.value).add(iconUrl);
+}
+
+/**
  * 通知时间只精确到秒：面板用于判断事件先后，不需要毫秒。
  */
 function formatNotificationTime(createdAt: number): string {
@@ -607,6 +627,22 @@ onUnmounted(stopCapturing);
         grid-class="grid-cols-[minmax(0,1fr)_auto]"
         :title="record.name"
       >
+        <template #leading>
+          <!-- 插件图标：宿主按清单 icon 经插件协议下发地址；未声明或拉取失败时回退拼图占位。 -->
+          <div
+            class="grid size-9 shrink-0 place-items-center overflow-hidden rounded-[9px] border border-[#dfe2e8] bg-[#f3f4f7] dark:border-[#2f323a] dark:bg-[#202229]"
+            :title="record.iconUrl ? undefined : '该插件未声明图标'"
+          >
+            <img
+              v-if="record.iconUrl && !brokenIconUrls.has(record.iconUrl)"
+              :src="record.iconUrl"
+              alt=""
+              class="size-full object-cover"
+              @error="handleIconLoadError(record.iconUrl ?? '')"
+            />
+            <Puzzle v-else :size="17" class="text-[#9aa0ac] dark:text-[#7c828d]" />
+          </div>
+        </template>
         <template #description>
           <div class="mt-2.5 flex items-center gap-2">
             <span

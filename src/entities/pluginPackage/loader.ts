@@ -186,6 +186,7 @@ function describePackage(packageRecord: PluginPackageRecord): PluginRuntimeRecor
     directoryPath: packageRecord.directoryPath,
     entry: packageRecord.manifest?.entry ?? "",
     error: null,
+    iconUrl: packageRecord.iconUrl,
     id: packageRecord.id,
     name: packageRecord.manifest?.name ?? packageRecord.id,
     permissions: [],

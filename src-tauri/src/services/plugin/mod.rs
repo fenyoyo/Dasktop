@@ -81,6 +81,16 @@ pub async fn scan_plugin_packages(app: &AppHandle) -> Result<PluginScanResult, S
         package.window_size =
             window_preference::resolve_window_size(app, &package.id, package.manifest.as_ref())
                 .await;
+
+        // 图标地址在这里一次性算好：协议前缀随平台变化（Windows 是 http，其它平台是
+        // plugin://），前端不允许自己拼。声明路径经过扫描期校验，地址构造只剩「拼字符串」
+        // 这一步，理论上不会失败；若真失败按「未声明图标」处理，让面板回退占位图。
+        package.icon_url = package
+            .manifest
+            .as_ref()
+            .and_then(|manifest| manifest.icon.as_deref())
+            .and_then(|icon| resolve_asset_url(&package.id, icon.trim()).ok())
+            .map(|url| url.to_string());
     }
 
     Ok(result)
@@ -489,7 +499,7 @@ fn ensure_entry_page(
 /// `plugin://`。这两种必须走 `WebviewUrl` 的不同分支——`External` 只接受 http/https，
 /// 拿 `plugin://` 去构造它会得到与预期不符的结果。
 fn resolve_webview_target(plugin_id: &str, entry: &str) -> Result<tauri::WebviewUrl, String> {
-    let url = resolve_page_url(plugin_id, entry)?;
+    let url = resolve_asset_url(plugin_id, entry)?;
 
     Ok(if matches!(url.scheme(), "http" | "https") {
         tauri::WebviewUrl::External(url)
@@ -498,29 +508,36 @@ fn resolve_webview_target(plugin_id: &str, entry: &str) -> Result<tauri::Webview
     })
 }
 
-/// 拼出插件入口页面的完整地址。
-fn resolve_page_url(plugin_id: &str, entry: &str) -> Result<tauri::Url, String> {
+/// 拼出插件包内任意资源（入口页面、图标等）的完整协议地址。
+///
+/// 这是插件资源 URL 的**唯一构造处**：开窗时的入口地址与扫描结果里下发给面板的
+/// `iconUrl` 都从这里走，保证两条链拼出的地址形状一致、都能被 [`protocol`] 处理器
+/// 解读回来。
+fn resolve_asset_url(plugin_id: &str, asset_path: &str) -> Result<tauri::Url, String> {
     let mut url: tauri::Url = asset_base_url()
         .parse()
         .map_err(|error| format!("插件页面地址前缀无法解析：{error}"))?;
 
-    url.set_path(&encode_page_path(plugin_id, entry));
+    url.set_path(&encode_asset_path(plugin_id, asset_path));
 
     Ok(url)
 }
 
-/// 把插件 id 与入口路径编码成 URL 路径。
+/// 把插件 id 与资源路径编码成 URL 路径。
 ///
 /// 必须是**多段**形式，不能图省事把整串路径塞进一段：页面里的相对链接
 /// （`./history.html`）是相对当前路径的目录解析的，压成一段之后它会丢掉插件 id，
 /// 协议处理器就再也定位不到包目录。这也是为什么不用 Tauri 的 `convertFileSrc` ——
 /// 它对整串做 `encodeURIComponent`，`/` 会一起变成 `%2F`。
-fn encode_page_path(plugin_id: &str, entry: &str) -> String {
-    let mut path = String::with_capacity(plugin_id.len() + entry.len() + 2);
+fn encode_asset_path(plugin_id: &str, asset_path: &str) -> String {
+    let mut path = String::with_capacity(plugin_id.len() + asset_path.len() + 2);
     path.push('/');
     path.push_str(plugin_id);
 
-    for segment in entry.split('/').filter(|segment| !segment.is_empty()) {
+    for segment in asset_path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+    {
         path.push('/');
         // `Url::set_path` 不编码 `%`，而路径里一个裸 `%` 就是非法转义序列
         // （文件名写成 `100%.html` 就够了，WebView 可能整条地址都不认）。
@@ -613,22 +630,22 @@ mod tests {
     }
 
     #[test]
-    fn page_path_stays_multi_segment() {
+    fn asset_path_stays_multi_segment() {
         // 压成一段会让页面里的相对链接丢掉插件 id，协议处理器就定位不到包目录。
         assert_eq!(
-            encode_page_path("http-console", "index.html"),
+            encode_asset_path("http-console", "index.html"),
             "/http-console/index.html"
         );
         assert_eq!(
-            encode_page_path("http-console", "pages/history.html"),
+            encode_asset_path("http-console", "pages/history.html"),
             "/http-console/pages/history.html"
         );
     }
 
     #[test]
-    fn page_path_encodes_each_segment_separately() {
+    fn asset_path_encodes_each_segment_separately() {
         // 段落里的空格与中文交给 `set_path` 编码，但 `/` 必须保持为分隔符。
-        let url = resolve_page_url("demo", "子目录/说明.html").expect("地址应可构造");
+        let url = resolve_asset_url("demo", "子目录/说明.html").expect("地址应可构造");
 
         assert_eq!(
             url.path(),
@@ -637,9 +654,29 @@ mod tests {
     }
 
     #[test]
-    fn page_path_escapes_bare_percent() {
+    fn icon_url_points_into_the_same_package_origin() {
+        // 面板把这条地址直接放进 <img src>：它必须与页面同源、路径首段是插件 id，
+        // 资源协议处理器才能按既有的包目录定位规则读出图标。
+        let url = resolve_asset_url("hello-dasktop", "assets/icon.svg")
+            .expect("图标地址应可构造");
+
+        assert_eq!(url.path(), "/hello-dasktop/assets/icon.svg");
+        assert_eq!(url.scheme(), asset_base_url_scheme());
+    }
+
+    /// 当前平台资源地址应使用的 scheme，供测试只比对 scheme 而不硬编码平台前缀。
+    fn asset_base_url_scheme() -> &'static str {
+        if cfg!(any(windows, target_os = "android")) {
+            "http"
+        } else {
+            "plugin"
+        }
+    }
+
+    #[test]
+    fn asset_path_escapes_bare_percent() {
         // `set_path` 不编码 `%`，裸 `%` 会让整条地址变成非法转义序列。
-        let url = resolve_page_url("demo", "100%.html").expect("地址应可构造");
+        let url = resolve_asset_url("demo", "100%.html").expect("地址应可构造");
 
         assert_eq!(url.path(), "/demo/100%25.html");
     }

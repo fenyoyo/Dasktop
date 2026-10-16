@@ -19,12 +19,16 @@ withDefaults(
 
 <template>
   <div class="grid min-h-[76px] items-center gap-6 px-5 py-3.5" :class="gridClass">
-    <div class="min-w-0 pr-4">
-      <h2 class="text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">{{ title }}</h2>
-      <p v-if="description" class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">
-        {{ description }}
-      </p>
-      <slot name="description" />
+    <div class="flex min-w-0 items-center gap-3 pr-4">
+      <!-- 行首附属物插槽：目前只放插件图标；未传入时不占空间，其它设置行外观不变。 -->
+      <slot name="leading" />
+      <div class="min-w-0 flex-1">
+        <h2 class="text-[13px] font-semibold text-[#202229] dark:text-[#f4f4f5]">{{ title }}</h2>
+        <p v-if="description" class="mt-1 text-[12px] leading-5 text-[#707684] dark:text-[#9ca0aa]">
+          {{ description }}
+        </p>
+        <slot name="description" />
+      </div>
     </div>
 
     <slot />

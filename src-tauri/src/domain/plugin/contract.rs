@@ -25,6 +25,17 @@ pub const PLUGIN_ASSET_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// 插件包内普通数据文件读取上限，单位为字节。
 pub const PLUGIN_DATA_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
+/// 清单 `icon` 允许声明的图片文件扩展名（不带点、小写）。
+///
+/// 取值范围按「WebView 的 `<img>` 能直接渲染」划定：图标经插件页面资源协议交付给宿主
+/// 面板，面板就是一个网页，因此只放行网页通用图片格式，不引入额外解码器依赖。
+/// 图标同样受 [`PLUGIN_ASSET_MAX_BYTES`] 体积上限约束。
+///
+/// 与 `scripts/verify-plugins.mjs` 解析的是同一份常量：扩展名集合只在这里维护，
+/// 校验脚本负责盯住提交前的插件包，扫描期负责拦住磁盘上后来放入的包。
+pub const PLUGIN_ICON_EXTENSIONS: &[&str] =
+    &["gif", "jpeg", "jpg", "png", "svg", "webp"];
+
 /// 插件页面资源协议名。
 ///
 /// 前端**不能**把协议写死成 `plugin://`：WebView 对自定义协议的寻址方式在各平台不同，

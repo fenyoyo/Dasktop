@@ -55,6 +55,14 @@ export interface PluginHotkeyRegistration {
 export interface PluginPackageManifest {
   /** 入口页面相对插件包目录的路径，指向一份 HTML 文件。 */
   entry: string;
+  /**
+   * 插件图标相对插件包目录的路径，可选。
+   *
+   * 宿主扫描时会强制它是包内真实存在、格式受支持的图片文件，声明不可用会让整个包
+   * 被标记为不可用；未声明时面板使用通用占位图标。允许格式与 Rust
+   * `PLUGIN_ICON_EXTENSIONS` 一致（png / jpg / jpeg / gif / webp / svg）。
+   */
+  icon?: string;
   /** 声明的窗口形态，未声明按 `standard`。 */
   window?: { kind?: PluginWindowKind };
   id: string;
@@ -134,6 +142,13 @@ export interface PluginPackageRecord {
   directoryPath: string;
   error: string | null;
   id: string;
+  /**
+   * 插件图标的完整协议地址，由宿主按清单 `icon` 拼好随扫描结果下发。
+   *
+   * 前端直接作为 `<img src>` 使用，不要自行拼接协议前缀；未声明图标或包校验失败时
+   * 为 `null`，面板据此回退到通用占位图标。
+   */
+  iconUrl: string | null;
   manifest: PluginPackageManifest | null;
   /** 宿主算好的生效窗口尺寸，随扫描结果下发。 */
   windowSize: PluginWindowSizeView;
@@ -215,6 +230,8 @@ export interface PluginRuntimeRecord {
   error: string | null;
   /** 插件包目录名，同时也是清单 id。 */
   id: string;
+  /** 插件图标的完整协议地址；未声明图标或清单不可用时为 `null`。 */
+  iconUrl: string | null;
   /** 插件展示名称，清单不可用时回退为 id。 */
   name: string;
   /** 清单声明且宿主认识的权限。 */

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Hello Dasktop 图标：应用主色底 + 招呼语，标识「最小示例插件」。 -->
+  <rect width="64" height="64" rx="14" fill="#ff5c5c" />
+  <text x="32" y="33" text-anchor="middle" dominant-baseline="central"
+        font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="28" font-weight="700" fill="#ffffff">Hi</text>
+</svg>

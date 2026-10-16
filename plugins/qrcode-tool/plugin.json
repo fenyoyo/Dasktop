@@ -3,6 +3,7 @@
   "name": "二维码工具",
   "version": "0.1.0",
   "entry": "index.html",
+  "icon": "icon.svg",
   "permissions": ["clipboard:read", "clipboard:write", "ui:notify"],
   "window": { "width": 720, "height": 850 }
 }

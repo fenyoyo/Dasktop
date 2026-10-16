@@ -136,6 +136,7 @@ DOM」，页面模式下这个前提消失了。现在的「桥」在 Rust 侧�
 └── my-plugin/
     ├── plugin.json      # 必需：清单
     ├── index.html       # 必需：入口页面（由清单 entry 指定）
+    ├── icon.svg         # 可选：插件图标（由清单 icon 指定，设置页列表展示）
     ├── index.js         # 可选：页面逻辑（ESM），由 index.html 自己 <script type="module"> 引入
     ├── history.html     # 可选：想有几个页面就有几个
     ├── state.js         # 可选：页面间共享的模块
@@ -154,11 +155,17 @@ DOM」，页面模式下这个前提消失了。现在的「桥」在 Rust 侧�
 | `name` | 展示名称 |
 | `version` | 插件版本号 |
 | `entry` | 入口页面相对路径，只允许包内相对路径，且文件必须真实存在 |
+| `icon` | 可选。插件图标相对路径，设置页插件列表展示；支持 png / jpg / jpeg / gif / webp / svg，规则同 `entry`：包内相对路径、文件必须存在、不超过页面资源体积上限 |
 | `permissions` | 声明需要的能力列表（见「权限与能力」） |
 | `window` | 可选。作者建议的窗口尺寸 `{ "width": 720, "height": 680 }`，取值规则见下 |
 
 `entry` 指向的文件在**扫描阶段**就会校验存在性：少了这道校验，包能正常显示在设置页里，
 直到用户点开窗口才看到一片空白，那时很难联想到是清单里文件名写错了。
+
+`icon` 同级别处理：声明了就校验路径、扩展名白名单与体积，任何一项不过整包标记为不可用；
+通过后扫描记录里的 `iconUrl` 直接给出完整协议地址，设置页拿它填 `<img src>`，
+前端不自己拼协议前缀。未声明图标时 `iconUrl` 为 `null`，列表回退通用占位图，
+运行时图片加载失败也只回退占位、不影响插件行展示。
 
 `permissions` 同理在扫描阶段预检：出现宿主不认识的权限，整包记为「不可用」并列出该项。
 
@@ -235,13 +242,13 @@ DOM」，桥要挂在哪一边都不自然。现在只有一个环境——页�
 
 插件页面的 URL 前缀**不跨平台一致**：Windows（WebView2）与 Android 把它映射成
 `http://plugin.localhost`，其余平台是 `plugin://localhost`。这条判断只在 Rust 侧一处
-（`services/plugin::asset_base_url`），页面地址由 `resolve_page_url` 直接给出完整结果，
+（`services/plugin::asset_base_url`），页面地址由 `resolve_asset_url` 直接给出完整结果，
 前端不再重复实现，也不再有 `plugin_asset_base_url` 这条命令。
 
 URL 必须是**多段**形式，逐段拼装并转义：
 
 ```rust
-fn encode_page_path(plugin_id: &str, entry: &str) -> String {
+fn encode_asset_path(plugin_id: &str, entry: &str) -> String {
     let mut path = String::with_capacity(plugin_id.len() + entry.len() + 2);
     path.push('/');
     path.push_str(plugin_id);
@@ -373,8 +380,9 @@ pub fn resolve_caller_plugin_id(window_label: &str, claimed_plugin_id: &str) -> 
 2. 对每个插件包（纯计算，不执行任何插件代码）
    ├─► 清单不可解析 / id 与目录名不一致 → 记为「不可用」并继续下一个
    ├─► 入口页面路径非法或不存在 → 记为「不可用」
+   ├─► 声明了 icon 却路径非法 / 文件缺失 / 格式不支持 / 超限 → 记为「不可用」
    ├─► 权限预检：出现宿主不认识的权限 → 记为「不可用」并列出该项
-   └─► 全部通过 → 记为「可用」
+   └─► 全部通过 → 记为「可用」，记录里带入口地址与 iconUrl
 
 3. 用户点插件卡片上的「打开」
    └─► openPluginWindow(pluginId)  ──IPC──►  open_plugin_window（Rust）
@@ -505,6 +513,7 @@ capability 的基准：
 | 文件系统 | 协议处理器与 `fs:*` 复用同一套路径沙箱，页面资源与数据文件都不能逃出插件包目录 | `plugin_package::resolve_sandboxed_path` |
 | 加载期预检 | 清单出现未知权限直接标记为不可用 | `plugin_package::load_package_record` |
 | 入口缺失 | 扫描阶段就校验入口页面存在，不留到打开窗口时才 404 | `plugin_package::load_package_record` |
+| 图标声明 | 声明了 icon 就校验路径/格式/体积；图标 URL 由宿主统一拼出，前端不拼协议前缀 | `plugin_package::validate_manifest_icon` / `services/plugin::resolve_asset_url` |
 | 网络滥用 | 只允许 http/https；20 秒超时；响应体 2 MB 上限 | `infrastructure/http/` |
 | 磁盘占用 | 单插件日志文件超过 512 KB 自动重置 | `plugin_log::reset_if_oversized` |
 | 体积滥用 | 页面资源 8 MB、包内数据文件 4 MB 上限 | `domain/plugin/contract.rs` |
@@ -569,8 +578,8 @@ capability 的基准：
 - **无版本兼容检查**：只校验「未知权限」这一种不兼容，不校验插件声明的宿主版本要求。
 - **通知不落库**：通知记录只在当前会话内存中保留最近 50 条，面板关闭重开后只剩日志文件里的历史。
 - **示例包播种判据是「有无子目录」**：老用户的运行目录不会自动补写新示例包。每加一个内置
-  示例包都要手动补给、或清空运行目录重播。手动补给时**必须带上新增的 `.js` 文件**，
-  否则页面引用的 `./index.js` 会 404，窗口一片空白。
+  示例包都要手动补给、或清空运行目录重播。手动补给时**必须带上清单新增引用的全部文件**
+  （例如 `index.js`、`icon.svg`），否则页面引用 404 或整包在扫描期被标记为不可用。
 
 ## 十一、开发与调试
 
@@ -594,6 +603,8 @@ pnpm build
 要等用户打开插件窗口才暴露。`scripts/verify-plugins.mjs` 把这些提到提交前：
 
 - 清单可解析 / `id` 与目录名一致 / `entry` 存在且是 HTML；
+- 清单声明了 `icon` 时，图标文件存在、留在包内、扩展名在 `PLUGIN_ICON_EXTENSIONS`
+  白名单内（该白名单从 `contract.rs` 实时解析，不另抄一份）；
 - 包内每个 HTML/JS 的相对引用都指向真实文件、不以 `/` 开头、不是裸模块名，
   且**每个脚本文件都被引用过**（没被引用的脚本是死文件）；
 - 插件的 `permissions` 都在 `PLUGIN_PERMISSIONS` 内（该集合从 `types.ts` 实时解析，
@@ -631,7 +642,8 @@ pnpm build
 调试时的几个落点：
 
 - **插件列表里没有某个目录** → 检查是否为 `.` / `_` 前缀（扫描时跳过），或清单 `id` 与目录名不一致。
-- **插件显示「不可用」** → 面板会直接给出原因：清单缺失、解析失败、入口页面不存在、未知权限。
+- **插件显示「不可用」** → 面板会直接给出原因：清单缺失、解析失败、入口页面不存在、
+  图标路径非法/文件缺失/格式不支持/超限、未知权限。
 - **点「打开」没反应** → 打开设置窗的开发者工具看 `console.error`，窗口创建失败只记日志、不弹提示。
 - **窗口空白 + 宿主界面一起卡死** → 建窗命令被写成了同步 `fn`，主线程死锁。改回
   `async fn`（见「为什么建窗命令必须 `async`」）。判据：宿主设置页也冻住 = 主线程被占，

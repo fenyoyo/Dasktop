@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    二维码工具图标：三个定位角（左上 / 右上 / 左下）+ 若干数据点，
+    刻意不用文字，避免小尺寸下汉字与缩写都不清晰。
+  -->
+  <rect width="64" height="64" rx="14" fill="#0d9488" />
+
+  <!-- 定位角：白底方框 + 底色内核。 -->
+  <g fill="#ffffff">
+    <rect x="11" y="11" width="15" height="15" rx="3" />
+    <rect x="38" y="11" width="15" height="15" rx="3" />
+    <rect x="11" y="38" width="15" height="15" rx="3" />
+  </g>
+  <g fill="#0d9488">
+    <rect x="16" y="16" width="5" height="5" rx="1" />
+    <rect x="43" y="16" width="5" height="5" rx="1" />
+    <rect x="16" y="43" width="5" height="5" rx="1" />
+  </g>
+
+  <!-- 数据点：右下区域的码点矩阵。 -->
+  <g fill="#ffffff">
+    <rect x="38" y="38" width="4" height="4" rx="1" />
+    <rect x="44" y="38" width="4" height="4" rx="1" />
+    <rect x="50" y="38" width="3" height="3" rx="1" />
+    <rect x="38" y="44" width="4" height="4" rx="1" />
+    <rect x="48" y="45" width="5" height="5" rx="1" />
+    <rect x="41" y="50" width="3" height="3" rx="1" />
+    <rect x="31" y="31" width="4" height="4" rx="1" />
+    <rect x="31" y="40" width="3" height="3" rx="1" />
+    <rect x="30" y="47" width="5" height="5" rx="1" />
+    <rect x="28" y="14" width="3" height="3" rx="1" />
+    <rect x="14" y="31" width="3" height="3" rx="1" />
+  </g>
+</svg>

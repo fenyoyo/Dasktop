@@ -7,8 +7,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::domain::plugin::{
     PluginManifest, PluginPackageRecord, PluginScanResult, PluginWindowSizeView, SamplePackage,
-    PLUGIN_ASSET_MAX_BYTES, PLUGIN_DATA_MAX_BYTES, PLUGIN_ID_MAX_LENGTH, PLUGIN_MANIFEST_FILE_NAME,
-    SAMPLE_PACKAGES,
+    PLUGIN_ASSET_MAX_BYTES, PLUGIN_DATA_MAX_BYTES, PLUGIN_ICON_EXTENSIONS, PLUGIN_ID_MAX_LENGTH,
+    PLUGIN_MANIFEST_FILE_NAME, SAMPLE_PACKAGES,
 };
 
 /// 目录扫描时跳过的宿主自用目录首字符集合。
@@ -393,9 +393,10 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
                 id: directory_name.to_string(),
                 directory_path,
                 manifest: None,
+                icon_url: None,
                 error: Some(error),
                 window_size: PluginWindowSizeView::global_default(),
-            }
+            };
         }
     };
 
@@ -404,6 +405,7 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
             id: directory_name.to_string(),
             directory_path,
             manifest: None,
+            icon_url: None,
             error: Some(format!(
                 "清单 id `{}` 与插件包目录名 `{directory_name}` 不一致",
                 manifest.id
@@ -421,6 +423,7 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
                 id: directory_name.to_string(),
                 directory_path,
                 manifest: None,
+                icon_url: None,
                 error: Some(format!("入口页面不存在：{}", manifest.entry)),
                 window_size: PluginWindowSizeView::global_default(),
             }
@@ -430,9 +433,30 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
                 id: directory_name.to_string(),
                 directory_path,
                 manifest: None,
+                icon_url: None,
                 error: Some(format!("入口页面路径非法：{message}")),
                 window_size: PluginWindowSizeView::global_default(),
             }
+        }
+    }
+
+    // 图标是可选项，但「声明了就必须立即可用」与入口页面同一条原则：把作者改了清单
+    // 却没同步文件、或写了网页不支持的格式拦在扫描期，面板上才不会出现碎裂占位图。
+    if let Some(icon) = manifest
+        .icon
+        .as_deref()
+        .map(str::trim)
+        .filter(|icon| !icon.is_empty())
+    {
+        if let Some(message) = validate_manifest_icon(package_dir, icon).err() {
+            return PluginPackageRecord {
+                id: directory_name.to_string(),
+                directory_path,
+                manifest: None,
+                icon_url: None,
+                error: Some(message),
+                window_size: PluginWindowSizeView::global_default(),
+            };
         }
     }
 
@@ -440,9 +464,54 @@ fn load_package_record(package_dir: &Path, directory_name: &str) -> PluginPackag
         id: directory_name.to_string(),
         directory_path,
         manifest: Some(manifest),
+        icon_url: None,
         error: None,
         window_size: PluginWindowSizeView::global_default(),
     }
+}
+
+/// 校验清单声明的图标路径。
+///
+/// 图标必须同时满足四条：包内相对路径（与入口共用同一条沙箱）、真实存在且是普通文件、
+/// 扩展名在 [`PLUGIN_ICON_EXTENSIONS`] 白名单内、体积不超过 [`PLUGIN_ASSET_MAX_BYTES`]。
+/// 体积预检不能省：面板拿到扫描结果就会立刻经资源协议拉取图标，超限文件只会在界面上
+/// 变成 404，而那时错误已经离开扫描上下文、很难归因到清单字段。
+fn validate_manifest_icon(package_dir: &Path, icon: &str) -> Result<(), String> {
+    let icon_path = match resolve_sandboxed_path(package_dir, icon) {
+        Ok(path) => path,
+        Err(message) => return Err(format!("图标路径非法：{message}")),
+    };
+
+    let metadata = match std::fs::metadata(&icon_path) {
+        Ok(metadata) => metadata,
+        Err(_) => return Err(format!("图标文件不存在：{icon}")),
+    };
+
+    if !metadata.is_file() {
+        return Err(format!("图标路径不是文件：{icon}"));
+    }
+
+    let extension = icon_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    if !PLUGIN_ICON_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(format!(
+            "图标格式不受支持：{icon}（仅支持 {}）",
+            PLUGIN_ICON_EXTENSIONS.join(" / ")
+        ));
+    }
+
+    if metadata.len() > PLUGIN_ASSET_MAX_BYTES {
+        return Err(format!(
+            "图标文件超过 {PLUGIN_ASSET_MAX_BYTES} 字节上限：{icon}（实际 {} 字节）",
+            metadata.len()
+        ));
+    }
+
+    Ok(())
 }
 
 /// 解析插件包清单文件。
@@ -838,6 +907,113 @@ mod tests {
                 .contains("入口页面不存在"),
             "错误信息应指出入口页面缺失：{:?}",
             record.error
+        );
+    }
+
+    /// 写入一份带图标声明的清单，供图标校验类用例构造前置状态。
+    fn write_package_with_icon(fixture: &TempPackage, icon: &str) -> PathBuf {
+        let package_dir = fixture.root.join("with-icon");
+        std::fs::create_dir_all(&package_dir).expect("插件包目录应可创建");
+        std::fs::write(
+            package_dir.join(PLUGIN_MANIFEST_FILE_NAME),
+            format!(
+                r#"{{"id":"with-icon","name":"带图标","version":"1.0.0","entry":"index.html","icon":{}}}"#,
+                serde_json::to_string(icon).expect("图标路径应可转成 JSON 字符串")
+            ),
+        )
+        .expect("清单应可写入");
+        std::fs::write(
+            package_dir.join("index.html"),
+            "<!doctype html><title>带图标</title>",
+        )
+        .expect("入口页面应可写入");
+
+        package_dir
+    }
+
+    /// 清单声明了图标却没放文件时，错误必须在扫描期暴露，而不是等面板加载出碎裂图。
+    #[test]
+    fn reports_missing_icon_as_package_error() {
+        let fixture = TempPackage::new("missing-icon");
+        write_package_with_icon(&fixture, "icon.png");
+
+        let scan = scan_packages(&fixture.root).expect("扫描应成功");
+        let record = &scan.packages[0];
+
+        assert!(record.manifest.is_none(), "图标缺失时不应给出清单");
+        assert!(
+            record
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("图标文件不存在"),
+            "错误信息应指出图标文件缺失：{:?}",
+            record.error
+        );
+    }
+
+    /// 图标路径同样不能逃出插件包目录：这条沙箱与入口页面共用，清单字段不享有例外。
+    #[test]
+    fn rejects_icon_path_escaping_package() {
+        let fixture = TempPackage::new("escape-icon");
+        write_package_with_icon(&fixture, "../icon.png");
+
+        let scan = scan_packages(&fixture.root).expect("扫描应成功");
+        let record = &scan.packages[0];
+
+        assert!(record.manifest.is_none(), "图标越界时不应给出清单");
+        assert!(
+            record
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("图标路径非法"),
+            "错误信息应指出图标路径非法：{:?}",
+            record.error
+        );
+    }
+
+    /// 白名单外的扩展名（如 `.html` / `.bmp`）不允许充当图标。
+    #[test]
+    fn rejects_unsupported_icon_extension() {
+        let fixture = TempPackage::new("bad-icon-ext");
+        let package_dir = write_package_with_icon(&fixture, "icon.bmp");
+        std::fs::write(package_dir.join("icon.bmp"), b"fake").expect("图标占位文件应可写入");
+
+        let scan = scan_packages(&fixture.root).expect("扫描应成功");
+        let record = &scan.packages[0];
+
+        assert!(record.manifest.is_none(), "图标格式非法时不应给出清单");
+        assert!(
+            record
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("图标格式不受支持"),
+            "错误信息应指出图标格式不受支持：{:?}",
+            record.error
+        );
+    }
+
+    /// 声明了合法的包内图片文件时，包应正常通过扫描（扫描只校验元数据，不解码图片内容）。
+    #[test]
+    fn accepts_declared_icon() {
+        let fixture = TempPackage::new("valid-icon");
+        let package_dir = write_package_with_icon(&fixture, "assets/icon.svg");
+        std::fs::create_dir_all(package_dir.join("assets")).expect("图标子目录应可创建");
+        std::fs::write(
+            package_dir.join("assets/icon.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#,
+        )
+        .expect("图标文件应可写入");
+
+        let scan = scan_packages(&fixture.root).expect("扫描应成功");
+        let record = &scan.packages[0];
+
+        assert!(record.error.is_none(), "合法图标应通过扫描：{:?}", record.error);
+        assert_eq!(
+            record.manifest.as_ref().expect("清单应可解析").icon.as_deref(),
+            Some("assets/icon.svg")
         );
     }
 

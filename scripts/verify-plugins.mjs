@@ -10,6 +10,7 @@
  * 这个脚本把这几类检查提到提交前：
  *
  * 1. 清单可解析、id 与目录名一致、entry 非空且指向 HTML 并真实存在；
+ *    声明了 icon 时，它必须指向真实存在、格式受支持且未逃出包目录的图片；
  * 2. 清单声明的权限都在宿主已知集合内，且与 Rust 侧的权限常量集合一致；
  * 3. 包内每个 HTML / JS 里的相对引用都指向真实存在的文件，且没有逃出包目录；
  * 4. 包内每个 `.js` 都被某处引用到——写好了却没人引入，运行期就是一段死代码；
@@ -90,6 +91,7 @@ async function main() {
   const knownPermissions = await loadKnownPermissions();
   const bridgeCapabilities = await loadBridgeCapabilities();
   const windowSizeLimits = await loadWindowSizeLimits();
+  const iconExtensions = await loadIconExtensions();
   const pluginIds = await listPluginDirectories();
 
   for (const pluginId of pluginIds) {
@@ -99,6 +101,7 @@ async function main() {
         knownPermissions,
         bridgeCapabilities,
         windowSizeLimits,
+        iconExtensions,
       ),
     );
   }
@@ -166,6 +169,33 @@ async function parseBackendPermissions() {
       (match) => match[1],
     ),
   );
+}
+
+/**
+ * 读取图标扩展名白名单。
+ *
+ * 白名单只在 Rust 契约（`PLUGIN_ICON_EXTENSIONS`）里维护一份：扫描期用它判定磁盘上的
+ * 第三方包，这里用它校验仓库内的内置包。脚本另起一份字面量的结局必然是两边悄悄漂移。
+ */
+async function loadIconExtensions() {
+  const source = await readFile(contractPath, "utf8");
+  const block = source.match(
+    /pub const PLUGIN_ICON_EXTENSIONS:\s*&\[&str\]\s*=\s*&?\[([\s\S]*?)\];/,
+  );
+
+  if (!block) {
+    throw new Error("未能从 contract.rs 解析出 PLUGIN_ICON_EXTENSIONS");
+  }
+
+  const extensions = new Set(
+    [...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1].toLowerCase()),
+  );
+
+  if (extensions.size === 0) {
+    throw new Error("contract.rs 的 PLUGIN_ICON_EXTENSIONS 是空的");
+  }
+
+  return extensions;
 }
 
 /**
@@ -323,6 +353,7 @@ async function verifyPackage(
   knownPermissions,
   bridgeCapabilities,
   windowSizeLimits,
+  allowedIconExtensions,
 ) {
   const packageDir = join(pluginsRoot, pluginId);
   const empty = { bridgeCalls: 0, files: 0, pages: 0, pluginId, refs: 0 };
@@ -366,6 +397,8 @@ async function verifyPackage(
   if (!existsSync(entry.filePath)) {
     fail(pluginId, `entry「${manifest.entry}」不存在`);
   }
+
+  verifyIconDeclaration(pluginId, manifest.icon, allowedIconExtensions);
 
   const htmlFiles = await collectFiles(packageDir, /\.html?$/i);
   const scriptFiles = await collectFiles(packageDir, /\.m?js$/i);
@@ -437,6 +470,45 @@ function verifyWindowPreference(pluginId, preference, limits) {
         `清单的 window.${dimension} 为 ${value}，超出宿主允许范围 ${min}-${max}（宿主会把它夹取到边界）`,
       );
     }
+  }
+}
+
+/**
+ * 校验清单声明的图标。
+ *
+ * icon 是可选字段，但与 entry 同规则：一旦声明，路径必须留在包内、扩展名受支持、
+ * 文件真实存在。宿主扫描期同样会判一遍，这里提前在提交前拦住，避免等设置页加载出
+ * 碎裂占位图才回头排查清单。
+ */
+function verifyIconDeclaration(pluginId, icon, allowedExtensions) {
+  if (icon === undefined) {
+    return;
+  }
+
+  if (typeof icon !== "string" || icon.trim() === "") {
+    fail(pluginId, "清单的 icon 必须是非空字符串（包内图片的相对路径）");
+    return;
+  }
+
+  const declared = icon.trim();
+  const resolved = resolveInsidePackage(pluginId, declared);
+
+  if (!resolved) {
+    fail(pluginId, `icon「${declared}」越出了插件包目录`);
+    return;
+  }
+
+  const extension = resolved.relativePath.split(".").pop()?.toLowerCase() ?? "";
+
+  if (!allowedExtensions.has(extension)) {
+    fail(
+      pluginId,
+      `icon「${declared}」格式不受支持（仅支持 ${[...allowedExtensions].join(" / ")}）`,
+    );
+  }
+
+  if (!existsSync(resolved.filePath)) {
+    fail(pluginId, `icon「${declared}」指向不存在的文件`);
   }
 }
 

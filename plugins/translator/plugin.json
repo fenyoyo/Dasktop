@@ -3,6 +3,7 @@
   "name": "翻译",
   "version": "0.2.0",
   "entry": "index.html",
+  "icon": "icon.svg",
   "permissions": ["net:request", "clipboard:write"],
   "window": { "kind": "quick", "width": 500, "height": 560 }
 }

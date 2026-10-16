@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- 翻译图标：汉字「文」与拉丁字母 A 并置，表示中英互译。 -->
+  <rect width="64" height="64" rx="14" fill="#4f46e5" />
+  <text x="32" y="33" text-anchor="middle" dominant-baseline="central"
+        font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="24" font-weight="700" fill="#ffffff">文A</text>
+</svg>

@@ -3,5 +3,6 @@
   "name": "Hello Dasktop",
   "version": "0.3.0",
   "entry": "index.html",
+  "icon": "icon.svg",
   "permissions": ["log:write", "ui:notify"]
 }

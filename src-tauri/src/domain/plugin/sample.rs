@@ -56,6 +56,13 @@ pub const SAMPLE_PACKAGES: &[SamplePackage] = &[
         )),
         files: &[
             SampleFile {
+                file_name: "icon.svg",
+                source: include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../plugins/hello-dasktop/icon.svg"
+                )),
+            },
+            SampleFile {
                 file_name: "index.html",
                 source: include_str!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
@@ -79,6 +86,13 @@ pub const SAMPLE_PACKAGES: &[SamplePackage] = &[
             "/../plugins/http-console/plugin.json"
         )),
         files: &[
+            SampleFile {
+                file_name: "icon.svg",
+                source: include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../plugins/http-console/icon.svg"
+                )),
+            },
             SampleFile {
                 file_name: "index.html",
                 source: include_str!(concat!(

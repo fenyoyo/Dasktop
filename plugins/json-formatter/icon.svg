@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- JSON 格式化工具图标：一对花括号是 JSON 最直观的视觉符号。 -->
+  <rect width="64" height="64" rx="14" fill="#16a34a" />
+  <text x="32" y="33" text-anchor="middle" dominant-baseline="central"
+        font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="34" font-weight="700" fill="#ffffff">{ }</text>
+</svg>

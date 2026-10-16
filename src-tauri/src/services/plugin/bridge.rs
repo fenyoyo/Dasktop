@@ -97,6 +97,8 @@ mod tests {
             name: "演示插件".to_string(),
             version: "1.0.0".to_string(),
             entry: "index.html".to_string(),
+            // 测试桥配置生成，与图标无关；图标校验由 plugin_package 的测试单独覆盖。
+            icon: None,
             permissions: permissions.iter().map(|item| item.to_string()).collect(),
             // 测试用的清单不关心窗口尺寸；取值优先级由 window_preference 单独覆盖。
             window: None,

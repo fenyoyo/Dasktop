@@ -61,6 +61,7 @@ my-plugin/
 └── <plugin-id>/                 # 目录名必须与 plugin.json 的 id 一致
     ├── plugin.json              # 必需：清单
     ├── index.html               # 必需：入口页面（由 entry 指定）
+    ├── icon.svg                 # 可选：插件图标（由 icon 指定）
     ├── index.js                 # 可选：页面逻辑，由 index.html 自己引入
     ├── style.css                # 可选：样式
     ├── history.html             # 可选：其它页面
@@ -82,6 +83,7 @@ my-plugin/
 | `name` | `string` | 是 | 展示名称，可包含中文 |
 | `version` | `string` | 是 | 插件版本号，仅展示 |
 | `entry` | `string` | 是 | 入口页面相对路径，必须指向包内真实存在的 HTML 文件 |
+| `icon` | `string` | 否 | 插件图标相对路径，显示在「设置 → 插件」的插件列表里（见下文说明） |
 | `permissions` | `string[]` | 是 | 声明需要的能力权限（见第五节） |
 | `window` | `object` | 否 | 窗口形态与作者建议尺寸（见第六节） |
 | `hotkeys` | `array` | 否 | 声明全局热键（见第七节） |
@@ -94,6 +96,7 @@ my-plugin/
   "name": "翻译助手",
   "version": "0.1.0",
   "entry": "index.html",
+  "icon": "icon.svg",
   "permissions": ["clipboard:read", "clipboard:write", "net:request"],
   "window": {
     "kind": "quick",
@@ -109,6 +112,16 @@ my-plugin/
   ]
 }
 ```
+
+### 图标（icon）
+
+`icon` 是可选字段，声明后图标显示在「设置 → 插件」的插件列表中；不声明时列表使用通用拼图占位图。
+
+- 值是图标文件相对插件包目录的相对路径，规则与 `entry` 一致：只允许包内相对路径（不允许 `..`、绝对路径、盘符），文件必须真实存在。
+- 支持 `png` / `jpg` / `jpeg` / `gif` / `webp` / `svg`，建议提供正方形图标（列表按正方形裁切展示）。
+- 文件体积不超过 8 MB（与其它页面资源共用上限）。
+- 声明了不存在的文件或不受支持的格式时，插件会在扫描期被标记为「不可用」并给出原因——不要声明一个占位路径等以后再补。
+- 图标经插件资源协议提供，插件页面也可以用相对路径引用自己的图标。
 
 ## 五、能力权限与桥 API
 
@@ -380,6 +393,7 @@ if (!window.dasktop) {
 
 - `plugin.json` 缺失或 JSON 解析失败；
 - `entry` 指向的文件不存在；
+- `icon` 指向的文件不存在、越出包目录或格式不受支持；
 - `permissions` 中声明了宿主不认识的权限。
 
 ### 点击「打开」没反应
@@ -438,7 +452,7 @@ pnpm build
 `pnpm verify:plugins` 会检查：
 
 - `plugin.json` 可解析，`id` 与目录名一致；
-- `entry` 存在且是 HTML；
+- `entry` 存在且是 HTML；声明了 `icon` 时，图标文件存在、留在包内且格式受支持；
 - 包内 HTML/JS 的相对引用都指向真实文件，不以 `/` 开头，不是裸模块名；
 - 每个脚本文件都被引用过（无死文件）；
 - `permissions` 都在宿主认识的权限集合内；
