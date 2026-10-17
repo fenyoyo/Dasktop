@@ -5,9 +5,7 @@ import {
   pluginRuntime,
   reloadPluginHotkeys,
   reloadPluginRuntime,
-  resetPluginWindowSize as forgetPluginWindowSize,
   savePluginHotkey,
-  savePluginWindowSize as rememberPluginWindowSize,
   syncPluginPackagesFromRepo,
   type PluginRuntimeSnapshot,
 } from "@/entities/pluginPackage";
@@ -37,12 +35,8 @@ export interface SettingsPluginsContext {
    * 失败会落在快照的 `error` 字段里由面板展示，这里再兜一层只会把错误吞掉。
    */
   syncPlugins: () => Promise<void>;
-  /** 忘掉某个插件记住的窗口尺寸，让它回到清单声明或全局默认值。 */
-  resetPluginWindowSize: (pluginId: string) => Promise<void>;
   /** 只读运行时快照，面板直接消费。 */
   runtime: ComputedRef<PluginRuntimeSnapshot>;
-  /** 记住某个插件的窗口尺寸。 */
-  savePluginWindowSize: (pluginId: string, width: number, height: number) => Promise<void>;
   /** 保存某个插件的启动热键配置（生效快捷键 + 是否启用）。 */
   savePluginHotkey: (
     pluginId: string,
@@ -87,27 +81,6 @@ export function useSettingsPlugins(): SettingsPluginsContext {
     }
   }
 
-  async function rememberWindowSize(
-    pluginId: string,
-    width: number,
-    height: number,
-  ): Promise<void> {
-    try {
-      // 原样写库：夹取由宿主在取用时统一完成，面板随后展示的也是宿主收敛后的值。
-      await rememberPluginWindowSize(pluginId, { width, height });
-    } catch (error) {
-      console.error("[plugin] 保存插件窗口尺寸失败", error);
-    }
-  }
-
-  async function forgetWindowSize(pluginId: string): Promise<void> {
-    try {
-      await forgetPluginWindowSize(pluginId);
-    } catch (error) {
-      console.error("[plugin] 重置插件窗口尺寸失败", error);
-    }
-  }
-
   async function rememberPluginHotkey(
     pluginId: string,
     accelerator: string,
@@ -129,10 +102,8 @@ export function useSettingsPlugins(): SettingsPluginsContext {
     openPluginPage,
     openPluginsRoot,
     reloadPlugins,
-    resetPluginWindowSize: forgetWindowSize,
     runtime,
     savePluginHotkey: rememberPluginHotkey,
-    savePluginWindowSize: rememberWindowSize,
     syncPlugins: syncPluginPackagesFromRepo,
     reloadPluginHotkeys: refreshPluginHotkeys,
   };

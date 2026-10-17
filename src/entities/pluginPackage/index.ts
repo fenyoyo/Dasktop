@@ -18,9 +18,7 @@ export {
   pluginRuntime,
   reloadPluginHotkeys,
   reloadPluginRuntime,
-  resetPluginWindowSize,
   savePluginHotkey,
-  savePluginWindowSize,
   syncPluginPackagesFromRepo,
 } from "./loader";
 

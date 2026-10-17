@@ -193,6 +193,9 @@ pub async fn open_plugin_window(
     .title(format!("{} - Dasktop 插件", manifest.name))
     .inner_size(window_size.width, window_size.height)
     .min_inner_size(min_size.0, min_size.1)
+    // 先隐藏再居中：build 出来的瞬间窗口默认可见，会先在默认位置闪一下再被 center 挪走，
+    // 因此建窗时保持不可见，居中完成后再 show，避免「先闪一下再复位」。
+    .visible(false)
     .initialization_script(bridge::build_script(plugin_id, &manifest)?);
 
     // 被热键唤起且首次建窗时，把「被唤起」意图注入页面：插件页面加载后通过
@@ -206,20 +209,11 @@ pub async fn open_plugin_window(
         .build()
         .map_err(|error| format!("插件窗口创建失败：{error}"))?;
 
-    // 还原记住的窗口位置：有记忆就落到原处；没有记忆则交还系统默认摆位。
-    // 放在 show 之前，避免先闪一下默认位置再跳过去。
-    if let Some((x, y)) = window_preference::resolve_window_position(app, plugin_id).await {
-        if let Err(error) =
-            window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)))
-        {
-            eprintln!("[plugin] 还原插件 {plugin_id} 窗口位置失败：{error}");
-        }
+    // 位置不记忆：每次新建都居中显示在屏幕中间，而非沿用上次拖到的位置。
+    // 已存在窗口的重新打开走上面那条早退分支，保持当前位置不被弹回。
+    if let Err(error) = window.center() {
+        eprintln!("[plugin] 居中插件 {plugin_id} 窗口失败：{error}");
     }
-
-    // 必须挂在「窗口已存在」那条早退路径之后：那里没有新窗口，重复挂载只会让同一个窗口
-    // 攒下多个监听器，每次关闭都写一遍同样的尺寸 / 位置。
-    window_preference::attach_size_persistence(&window);
-    window_preference::attach_position_persistence(&window);
 
     window
         .show()

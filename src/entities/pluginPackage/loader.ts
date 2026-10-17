@@ -1,9 +1,5 @@
 import { readonly, shallowRef } from "vue";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import {
-  deletePluginWindowSize,
-  savePluginWindowSize as persistPluginWindowSize,
-} from "@/shared/storage/database";
 import { listenPluginNotification } from "@/shared/ipc/pluginPackage";
 import { listPluginHotkeys, listPlugins, setPluginHotkey, syncDevPluginPackages } from "./api";
 import { resolvePluginPermissions } from "./permissions";
@@ -13,7 +9,6 @@ import {
   type PluginPackageRecord,
   type PluginRuntimeRecord,
   type PluginRuntimeSnapshot,
-  type PluginWindowSize,
 } from "./types";
 
 /**
@@ -95,34 +90,6 @@ export async function syncPluginPackagesFromRepo(): Promise<void> {
 
     return;
   }
-
-  await reloadPluginRuntime();
-}
-
-/**
- * 记住某个插件的窗口尺寸。
- *
- * 宿主在插件窗口关闭时也会写同一张表，因此这里的写入与「用户自己拖出来的尺寸」是同一份
- * 数据：设置页改完立刻生效，下次开窗就用它（正在开着的窗口不会被改动，那是用户此刻正在
- * 调整的尺寸）。
- *
- * 写完重新扫描一次而不是本地改快照：面板上显示的尺寸是宿主算出来的（夹取过、带来源），
- * 前端本地拼一个值就等于又实现了一遍尺寸规则。
- */
-export async function savePluginWindowSize(
-  pluginId: string,
-  size: PluginWindowSize,
-): Promise<void> {
-  await persistPluginWindowSize(pluginId, size);
-
-  await reloadPluginRuntime();
-}
-
-/**
- * 忘掉某个插件记住的窗口尺寸，让它回到清单声明或全局默认值。
- */
-export async function resetPluginWindowSize(pluginId: string): Promise<void> {
-  await deletePluginWindowSize(pluginId);
 
   await reloadPluginRuntime();
 }

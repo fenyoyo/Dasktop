@@ -20,7 +20,7 @@ import {
   type AppSettingNumberKey,
 } from "@/entities/appSettings/defaults";
 import { BOX_DEFAULT_STATE, BOX_TITLE_OPACITY } from "@/entities/desktopBox/layout";
-import type { PluginWindowSize } from "@/entities/pluginPackage/types";
+
 import type { Workspace, WorkspaceWindow } from "@/entities/workspace/types";
 
 let databasePromise: Promise<Database> | null = null;
@@ -87,26 +87,8 @@ export async function initializeStorage(): Promise<void> {
   await ensureBoxItemOrderStorage(database);
   await ensureBoxVirtualItemStorage(database);
   await ensureShellIconVisibilityRecordStorage(database);
-  await ensurePluginWindowSizeStorage(database);
   await ensurePluginHotkeyStorage(database);
   await ensureWorkspaceStorage(database);
-}
-
-/**
- * 插件窗口尺寸表由宿主与设置页共同读写：宿主在插件窗口关闭时写回最后一次尺寸
- * （见 Rust `services/plugin/window_preference.rs`），设置页负责展示与重置。
- *
- * 表结构必须与 Rust 侧的 `ensure_window_size_storage` 保持一致。
- */
-async function ensurePluginWindowSizeStorage(database: Database): Promise<void> {
-  await database.execute(`
-    CREATE TABLE IF NOT EXISTS ${APP_SETTINGS_STORAGE.tables.pluginWindowSizes} (
-      plugin_id TEXT PRIMARY KEY,
-      width REAL NOT NULL,
-      height REAL NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `);
 }
 
 /**
@@ -868,44 +850,7 @@ function sanitizeDesktopBoxTitleOpacity(value: unknown): number {
   );
 }
 
-/**
- * 写入单个插件的窗口尺寸，已存在时覆盖。
- *
- * 这里不做夹取：读取方（宿主 `services/plugin/window_preference.rs`）在取用时统一收敛，
- * 前端再加一道夹取就等于把边界规则复制到第二处，而面板显示的值也来自宿主，
- * 本地夹取只会让两处结果出现无人察觉的分叉。
- */
-export async function savePluginWindowSize(
-  pluginId: string,
-  size: PluginWindowSize,
-): Promise<void> {
-  const database = await getDatabase();
 
-  await database.execute(
-    `
-      INSERT INTO ${APP_SETTINGS_STORAGE.tables.pluginWindowSizes}
-        (plugin_id, width, height, updated_at)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT(plugin_id) DO UPDATE SET
-        width = excluded.width,
-        height = excluded.height,
-        updated_at = excluded.updated_at
-    `,
-    [pluginId, size.width, size.height, Date.now()],
-  );
-}
-
-/**
- * 删除单个插件记住的窗口尺寸，让它回到清单声明或全局默认值。
- */
-export async function deletePluginWindowSize(pluginId: string): Promise<void> {
-  const database = await getDatabase();
-
-  await database.execute(
-    `DELETE FROM ${APP_SETTINGS_STORAGE.tables.pluginWindowSizes} WHERE plugin_id = $1`,
-    [pluginId],
-  );
-}
 
 /**
  * 按键保存设置，保持设置项独立更新，避免整行 JSON 合并冲突
