@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "把文本生成二维码，也支持识别剪贴板里的二维码图片。",
   "entry": "index.html",
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "permissions": [
     "clipboard:read",
     "clipboard:write",

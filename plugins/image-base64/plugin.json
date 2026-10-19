@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "图片与 Base64 字符串互转，结果一键写入剪贴板。",
   "entry": "index.html",
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "permissions": ["clipboard:read", "clipboard:write", "ui:notify"],
   "window": { "width": 760, "height": 760 }
 }

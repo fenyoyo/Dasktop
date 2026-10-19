@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "读取剪贴板中的 JSON，格式化或压缩后写回剪贴板。",
   "entry": "index.html",
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "permissions": ["clipboard:read", "clipboard:write"],
   "window": { "width": 920, "height": 680 }
 }

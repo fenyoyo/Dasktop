@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "description": "调用在线翻译接口翻译文本，译文一键写入剪贴板。",
   "entry": "index.html",
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "permissions": ["net:request", "clipboard:write"],
   "window": { "kind": "quick", "width": 500, "height": 560 }
 }

@@ -4,7 +4,7 @@
   "version": "0.4.0",
   "description": "HTTP 请求调试台：发送请求、查看响应历史，演示多页面与文件读写能力。",
   "entry": "index.html",
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "permissions": ["clipboard:write", "fs:read", "fs:write", "log:write", "net:request", "ui:notify"],
   "window": { "width": 720, "height": 680 }
 }

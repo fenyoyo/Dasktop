@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <!-- 图片 Base64 转换图标：图片轮廓 + B64 缩写。 -->
-  <rect width="64" height="64" rx="14" fill="#7c5cf0" />
-  <text x="32" y="33" text-anchor="middle" dominant-baseline="central"
-        font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="20" font-weight="700" fill="#ffffff">B64</text>
-</svg>

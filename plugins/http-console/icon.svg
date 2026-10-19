@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <!-- HTTP 控制台图标：请求行语义，GET 字样直接表达它代发 HTTP 请求的能力。 -->
-  <rect width="64" height="64" rx="14" fill="#2f6fed" />
-  <text x="32" y="33" text-anchor="middle" dominant-baseline="central"
-        font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="21" font-weight="700" fill="#ffffff">GET</text>
-</svg>
