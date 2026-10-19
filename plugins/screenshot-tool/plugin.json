@@ -3,11 +3,7 @@
   "name": "截图工具",
   "version": "0.1.0",
   "entry": "index.html",
-  "permissions": [
-    "screen:capture",
-    "fs:save",
-    "clipboard:write",
-    "ui:notify"
-  ],
+  "icon": "icon.png",
+  "permissions": ["screen:capture", "fs:save", "clipboard:write", "ui:notify"],
   "window": { "width": 900, "height": 700 }
 }
