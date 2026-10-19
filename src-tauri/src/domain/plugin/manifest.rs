@@ -50,12 +50,18 @@ pub struct PluginManifest {
     /// 图片文件——这些约束在扫描期强制，声明了不可用图标会让整个包被标记为不可用，
     /// 而不是等面板加载出一个碎裂图标。具体格式见
     /// [`crate::domain::plugin::PLUGIN_ICON_EXTENSIONS`]。
+    ///
+    /// 同一个字段被两处消费：设置面板读 [`PluginPackageRecord::icon_url`] 做列表缩略图，
+    /// 宿主建窗时读本字段把包内图标设为窗口任务栏图标。因此它不只是「面板装饰」，
+    /// 图标必须放在包里而不是让插件页面自己设 favicon——任务栏图标由系统原生窗口管理器
+    /// 读取，页面的 `<link rel="icon">` 影响不到它。
     #[serde(default)]
     pub icon: Option<String>,
-    /// 插件作者声明的窗口尺寸，宿主在用户没有为这个插件单独记住尺寸时采用它。
+    /// 插件作者声明的窗口尺寸，宿主开窗时直接采用它。
     ///
-    /// 它是「作者的建议」而不是硬约束：用户一旦手动改过该插件窗口的大小，宿主记住的
-    /// 值优先。完整优先级见 [`crate::services::plugin::window_preference`]。
+    /// 宿主不记忆用户拖出来的尺寸：未声明时回落到合约内置默认
+    /// （[`crate::domain::plugin::PLUGIN_WINDOW_SIZE`]），缺省维度同样按默认值补齐。
+    /// 解析规则见 [`crate::services::plugin::window_preference`]。
     #[serde(default)]
     pub window: Option<PluginWindowPreference>,
     /// 插件声明的能力清单。
@@ -89,9 +95,9 @@ pub struct PluginPackageRecord {
     pub error: Option<String>,
     /// 宿主为这个插件算好的生效窗口尺寸，由服务层在扫描完成后回填。
     ///
-    /// 放在记录里而不是让前端自己算：尺寸是三级优先级（用户记住的 > 清单声明 > 全局
-    /// 默认）收敛的结果，规则实现在一处才能保证「面板显示的值」与「开窗用的值」永远
-    /// 是同一个。基础设施层构造记录时填全局默认，服务层随后按清单与数据库覆盖。
+    /// 放在记录里而不是让前端自己算：尺寸由「清单声明优先、缺失回落默认」的规则收敛，
+    /// 规则实现在一处才能保证「面板显示的值」与「开窗用的值」永远是同一个。
+    /// 基础设施层构造记录时填默认值，服务层随后按清单覆盖。
     pub window_size: PluginWindowSizeView,
 }
 

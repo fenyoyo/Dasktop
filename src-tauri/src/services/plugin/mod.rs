@@ -45,6 +45,8 @@ use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::infrastructure::windows::common::png;
+
 use crate::domain::plugin::{
     PluginHttpRequest, PluginHttpResponse, PluginManifest, PluginScanResult,
     PLUGIN_CLIPBOARD_IMAGE_MAX_BYTES, PLUGIN_CLIPBOARD_MAX_BYTES, PLUGIN_LOG_DIR_NAME,
@@ -209,6 +211,23 @@ pub async fn open_plugin_window(
     .visible(false)
     .initialization_script(bridge::build_script(plugin_id, &manifest)?);
 
+    // 清单声明了图标时，顺手把包内图标设为窗口任务栏图标；任一环节失败只记日志，
+    // 不阻断开窗——图标是装饰，开不出窗口才是故障。
+    if let Some(ref icon_path) = manifest.icon {
+        match load_plugin_icon(&package_dir, icon_path) {
+            Ok(Some(image)) => {
+                builder = builder
+                    .icon(image)
+                    .map_err(|error| format!("插件 {plugin_id} 图标设置失败：{error}"))?;
+            }
+            // 非 PNG 图标：扫描期已确认文件可用，面板照常显示，任务栏退回宿主默认图标。
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("[plugin] 插件 {plugin_id} 图标加载失败（使用默认图标）：{error}");
+            }
+        }
+    }
+
     // 被热键唤起且首次建窗时，把「被唤起」意图注入页面：插件页面加载后通过
     // dasktop.hotkey.onTrigger 读走这个意图，而不必等宿主发事件（页面还没挂监听时事件必丢）。
     if trigger.is_some() {
@@ -235,6 +254,37 @@ pub async fn open_plugin_window(
         .map_err(|error| format!("插件窗口聚焦失败：{error}"))?;
 
     Ok(())
+}
+
+/// 从插件包目录加载图标 PNG，解码为 Tauri 窗口图标。
+///
+/// 图标路径由清单的 `icon` 字段声明，相对插件包目录。清单允许的图标格式不止 PNG
+/// （见 [`crate::domain::plugin::PLUGIN_ICON_EXTENSIONS`]），但这里只处理 PNG：
+/// Windows 任务栏要的是 RGBA 位图，PNG 是现有解码路径唯一覆盖的格式。其余格式返回
+/// `Ok(None)` 表示「本次不设任务栏图标」——这是正常分支而非错误，不该在日志里刷一遍。
+/// 只有真的声明了 PNG 却读不出来（文件在扫描后被删、内容损坏）才返回 `Err`。
+fn load_plugin_icon(
+    package_dir: &Path,
+    icon_path: &str,
+) -> Result<Option<tauri::image::Image<'static>>, String> {
+    let is_png = icon_path
+        .rsplit('.')
+        .next()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+    if !is_png {
+        return Ok(None);
+    }
+
+    let full_path = package_dir.join(icon_path);
+    if !full_path.is_file() {
+        return Err(format!("图标文件不存在：{icon_path}"));
+    }
+
+    let bytes = std::fs::read(&full_path).map_err(|e| format!("图标文件读取失败：{e}"))?;
+
+    let (rgba, width, height) = png::decode_png_to_rgba(&bytes)?;
+
+    Ok(Some(tauri::image::Image::new_owned(rgba, width, height)))
 }
 
 /// 读取插件包内文本文件，对应 `fs:read` 能力。
