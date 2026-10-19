@@ -243,9 +243,17 @@ function buildDescription(minutes, hours, days, months, weekdays) {
   const monthText = describeMonth(months);
   const weekdayText = describeWeekday(weekdays);
 
-  // 常见特判：每月 / 每周 / 每日 / 每小时
+  // 常见特判：每分钟 / 每 N 分钟 / 每小时 / 每天 / 每周 / 每月 / 每年
   if (isEvery(minutes, FIELD_META[0]) && isEvery(hours, FIELD_META[1]) && isEvery(days, FIELD_META[2]) && isEvery(months, FIELD_META[3]) && isEvery(weekdays, FIELD_META[4])) {
     return "每分钟执行一次";
+  }
+
+  if (isStepFrom(minutes, 0) && isEvery(hours, FIELD_META[1]) && isEvery(days, FIELD_META[2]) && isEvery(months, FIELD_META[3]) && isEvery(weekdays, FIELD_META[4])) {
+    return `每 ${minutes[1] - minutes[0]} 分钟执行一次`;
+  }
+
+  if (isSingle(minutes) && isEvery(hours, FIELD_META[1]) && isEvery(days, FIELD_META[2]) && isEvery(months, FIELD_META[3]) && isEvery(weekdays, FIELD_META[4])) {
+    return `每小时的第 ${pad(minutes[0])} 分执行一次`;
   }
 
   if (isSingle(minutes) && isSingle(hours) && isEvery(days, FIELD_META[2]) && isEvery(months, FIELD_META[3]) && isEvery(weekdays, FIELD_META[4])) {

@@ -4,5 +4,5 @@
   "version": "0.1.0",
   "entry": "index.html",
   "permissions": ["clipboard:read", "clipboard:write"],
-  "window": { "width": 720, "height": 760 }
+  "window": { "width": 720, "height": 800 }
 }

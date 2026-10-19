@@ -563,6 +563,10 @@ function checkBridge() {
   if (!dasktop.has("clipboard:write")) {
     generateCopy.disabled = true;
   }
+
+  if (!dasktop.has("clipboard:read")) {
+    parsePaste.disabled = true;
+  }
 }
 
 init();
